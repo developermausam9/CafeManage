@@ -1,0 +1,10 @@
+{
+  "buildCommand": "bash build_flutter.sh",
+  "outputDirectory": "cafe/build/web",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
