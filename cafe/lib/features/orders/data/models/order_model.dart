@@ -184,7 +184,6 @@ class OrderModel extends Equatable {
       'customer_due_id': customerDueId,
       'room_id': roomId,
       'room_booking_id': roomBookingId,
-      'room_charge': roomCharge,
     };
   }
 
