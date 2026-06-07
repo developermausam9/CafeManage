@@ -14,7 +14,7 @@ cd cafe
 flutter pub get
 
 echo "=== Building Flutter Web ==="
-flutter build web --release --web-renderer html --base-href "/"
+flutter build web --release --base-href "/"
 
 echo "=== Build complete ==="
 ls -la build/web/
