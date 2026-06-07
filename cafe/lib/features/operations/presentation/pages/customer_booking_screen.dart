@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import '../../../../core/presentation/theme/app_theme.dart';
 import '../../../../core/network/supabase_config.dart';
 
@@ -11,225 +13,48 @@ class CustomerBookingScreen extends StatefulWidget {
   State<CustomerBookingScreen> createState() => _CustomerBookingScreenState();
 }
 
-class _CustomerBookingScreenState extends State<CustomerBookingScreen> {
+class _CustomerBookingScreenState extends State<CustomerBookingScreen>
+    with SingleTickerProviderStateMixin {
   final SupabaseClient _client = SupabaseConfig.client;
 
+  // State
   String? _cafeId;
   String? _cafeName;
+  String? _cafePhone;
+  String? _cafeAddress;
   String? _paymentQrUrl;
   bool _isLoading = true;
   String? _errorMessage;
 
+  // Dates
   DateTime _checkInDate = DateTime.now().add(const Duration(days: 1));
   DateTime _checkOutDate = DateTime.now().add(const Duration(days: 2));
 
+  // Rooms data
   List<Map<String, dynamic>> _rooms = [];
   List<Map<String, dynamic>> _bookings = [];
   List<Map<String, dynamic>> _availableRooms = [];
-  bool _checkingAvailability = false;
 
-  // Booking Form Controllers
+  // Step
+  int _step = 0; // 0=dates, 1=room, 2=details, 3=payment, done=success
+
+  // Form
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _txRefCtrl = TextEditingController();
+  final _notesCtrl = TextEditingController();
+  int _guestCount = 1;
 
   Map<String, dynamic>? _selectedRoom;
-  bool _bookingSubmitted = false;
-  String? _submittedBookingId;
+  bool _isSubmitting = false;
+  Map<String, dynamic>? _completedBooking;
 
   @override
   void initState() {
     super.initState();
     _initializeData();
-  }
-
-  Map<String, String> _getQueryParams() {
-    final params = Map<String, String>.from(Uri.base.queryParameters);
-    final fragment = Uri.base.fragment;
-    if (fragment.contains('?')) {
-      final queryString = fragment.split('?').last;
-      final parts = queryString.split('&');
-      for (var part in parts) {
-        final kv = part.split('=');
-        if (kv.length == 2) {
-          params[kv[0]] = Uri.decodeComponent(kv[1]);
-        }
-      }
-    }
-    return params;
-  }
-
-  Future<void> _initializeData() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    final params = _getQueryParams();
-    _cafeId = params['cafe_id'];
-
-    if (_cafeId == null || _cafeId!.isEmpty) {
-      // Look up first cafe as fallback for convenience
-      try {
-        final cafes = await _client.from('cafes').select('id, name').limit(1);
-        if (cafes.isNotEmpty) {
-          _cafeId = cafes.first['id'];
-          _cafeName = cafes.first['name'];
-        } else {
-          setState(() {
-            _errorMessage = 'No active hotels/cafes found in the system.';
-            _isLoading = false;
-          });
-          return;
-        }
-      } catch (e) {
-        setState(() {
-          _errorMessage = 'Invalid URL configuration. Missing cafe_id.';
-          _isLoading = false;
-        });
-        return;
-      }
-    }
-
-    try {
-      // Load Cafe Name & QR payment settings
-      final cafeRes = await _client.from('cafes').select('name').eq('id', _cafeId!).single();
-      _cafeName = cafeRes['name'];
-
-      final settingsRes = await _client.from('settings').select('payment_qr_url').eq('cafe_id', _cafeId!).maybeSingle();
-      if (settingsRes != null) {
-        _paymentQrUrl = settingsRes['payment_qr_url'];
-      }
-
-      await _loadRoomsAndBookings();
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'Failed to load hotel configuration: $e';
-      });
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _loadRoomsAndBookings() async {
-    final roomsRes = await _client.from('rooms').select().eq('cafe_id', _cafeId!);
-    _rooms = List<Map<String, dynamic>>.from(roomsRes);
-
-    final bookingsRes = await _client
-        .from('room_bookings')
-        .select()
-        .eq('cafe_id', _cafeId!)
-        .not('status', 'eq', 'cancelled');
-    _bookings = List<Map<String, dynamic>>.from(bookingsRes);
-
-    _runAvailabilityCheck();
-  }
-
-  void _runAvailabilityCheck() {
-    setState(() => _checkingAvailability = true);
-
-    final checkInStr = DateFormat('yyyy-MM-dd').format(_checkInDate);
-    final checkOutStr = DateFormat('yyyy-MM-dd').format(_checkOutDate);
-
-    final overlapBookings = _bookings.where((b) {
-      final bIn = b['check_in_date'] as String;
-      final bOut = b['check_out_date'] as String;
-      // Overlap formula: start1 < end2 && start2 < end1
-      return checkInStr.compareTo(bOut) < 0 && bIn.compareTo(checkOutStr) < 0;
-    }).toList();
-
-    final bookedRoomIds = overlapBookings.map((b) => b['room_id'] as String).toSet();
-
-    setState(() {
-      _availableRooms = _rooms.where((room) {
-        // Must be available status and not booked in this range
-        final isNotBooked = !bookedRoomIds.contains(room['id']);
-        final isClean = room['status'] == 'available' || room['status'] == 'dirty';
-        return isNotBooked && isClean;
-      }).toList();
-      
-      _selectedRoom = null;
-      _checkingAvailability = false;
-    });
-  }
-
-  Future<void> _selectDateRange(BuildContext context) async {
-    final DateTimeRange? picked = await showDateRangePicker(
-      context: context,
-      initialDateRange: DateTimeRange(start: _checkInDate, end: _checkOutDate),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-      builder: (context, child) {
-        return Theme(
-          data: ThemeData.light().copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: AppTheme.primaryColor,
-              onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: AppTheme.textPrimary,
-            ),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (picked != null) {
-      setState(() {
-        _checkInDate = picked.start;
-        _checkOutDate = picked.end;
-      });
-      _runAvailabilityCheck();
-    }
-  }
-
-  int get _nightsCount => _checkOutDate.difference(_checkInDate).inDays;
-
-  Future<void> _submitBooking() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_selectedRoom == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a room to book.'), backgroundColor: Colors.red),
-      );
-      return;
-    }
-
-    setState(() => _checkingAvailability = true);
-
-    try {
-      final totalAmount = _selectedRoom!['price_per_night'] * _nightsCount;
-
-      final res = await _client.from('room_bookings').insert({
-        'cafe_id': _cafeId,
-        'room_id': _selectedRoom!['id'],
-        'guest_name': _nameCtrl.text.trim(),
-        'guest_phone': _phoneCtrl.text.trim(),
-        'guest_email': _emailCtrl.text.trim(),
-        'check_in_date': DateFormat('yyyy-MM-dd').format(_checkInDate),
-        'check_out_date': DateFormat('yyyy-MM-dd').format(_checkOutDate),
-        'status': 'pending',
-        'total_amount': totalAmount,
-        'payment_status': _txRefCtrl.text.trim().isNotEmpty ? 'pending' : 'unpaid',
-
-        'transaction_ref': _txRefCtrl.text.trim(),
-      }).select().single();
-
-      // Update room status to occupied
-      await _client.from('rooms').update({'status': 'occupied'}).eq('id', _selectedRoom!['id']);
-
-      setState(() {
-        _bookingSubmitted = true;
-        _submittedBookingId = res['id'];
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Booking failed: $e'), backgroundColor: Colors.red),
-      );
-    } finally {
-      setState(() => _checkingAvailability = false);
-    }
   }
 
   @override
@@ -238,337 +63,1042 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen> {
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
     _txRefCtrl.dispose();
+    _notesCtrl.dispose();
     super.dispose();
   }
 
+  Map<String, String> _getQueryParams() {
+    final params = Map<String, String>.from(Uri.base.queryParameters);
+    final fragment = Uri.base.fragment;
+    if (fragment.contains('?')) {
+      final queryString = fragment.split('?').last;
+      for (var part in queryString.split('&')) {
+        final kv = part.split('=');
+        if (kv.length == 2) params[kv[0]] = Uri.decodeComponent(kv[1]);
+      }
+    }
+    return params;
+  }
+
+  Future<void> _initializeData() async {
+    setState(() { _isLoading = true; _errorMessage = null; });
+    final params = _getQueryParams();
+    _cafeId = params['cafe_id'];
+    try {
+      if (_cafeId == null || _cafeId!.isEmpty) {
+        final cafes = await _client.from('cafes').select('id, name, phone, address').limit(1);
+        if (cafes.isEmpty) throw Exception('No hotel configured.');
+        _cafeId = cafes.first['id'];
+        _cafeName = cafes.first['name'];
+        _cafePhone = cafes.first['phone'];
+        _cafeAddress = cafes.first['address'];
+      } else {
+        final cafe = await _client.from('cafes').select('name, phone, address').eq('id', _cafeId!).single();
+        _cafeName = cafe['name'];
+        _cafePhone = cafe['phone'];
+        _cafeAddress = cafe['address'];
+      }
+      final settings = await _client.from('settings').select('payment_qr_url').eq('cafe_id', _cafeId!).maybeSingle();
+      if (settings != null) _paymentQrUrl = settings['payment_qr_url'];
+      await _loadRooms();
+    } catch (e) {
+      setState(() => _errorMessage = 'Failed to load: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _loadRooms() async {
+    final roomsRes = await _client.from('rooms').select().eq('cafe_id', _cafeId!);
+    _rooms = List<Map<String, dynamic>>.from(roomsRes);
+    final bookingsRes = await _client.from('room_bookings').select().eq('cafe_id', _cafeId!).not('status', 'eq', 'cancelled').not('status', 'eq', 'checked_out');
+    _bookings = List<Map<String, dynamic>>.from(bookingsRes);
+    _computeAvailability();
+  }
+
+  void _computeAvailability() {
+    final ciStr = DateFormat('yyyy-MM-dd').format(_checkInDate);
+    final coStr = DateFormat('yyyy-MM-dd').format(_checkOutDate);
+    final overlapping = _bookings.where((b) {
+      final bIn = b['check_in_date'] as String;
+      final bOut = b['check_out_date'] as String;
+      return ciStr.compareTo(bOut) < 0 && bIn.compareTo(coStr) < 0;
+    });
+    final bookedIds = overlapping.map((b) => b['room_id'] as String).toSet();
+    setState(() {
+      _availableRooms = _rooms.where((r) {
+        return !bookedIds.contains(r['id']) &&
+            (r['status'] == 'available' || r['status'] == 'dirty');
+      }).toList();
+      _selectedRoom = null;
+    });
+  }
+
+  int get _nights => _checkOutDate.difference(_checkInDate).inDays;
+  double get _totalAmount => (_selectedRoom?['price_per_night'] as num? ?? 0).toDouble() * _nights;
+
+  Future<void> _pickDates() async {
+    final range = await showDateRangePicker(
+      context: context,
+      initialDateRange: DateTimeRange(start: _checkInDate, end: _checkOutDate),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (ctx, child) => Theme(
+        data: ThemeData.light().copyWith(
+          colorScheme: const ColorScheme.light(
+            primary: AppTheme.primaryColor,
+            onPrimary: Colors.white,
+            surface: Colors.white,
+            onSurface: Color(0xFF1A1A2E),
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (range != null) {
+      setState(() {
+        _checkInDate = range.start;
+        _checkOutDate = range.end;
+      });
+      _computeAvailability();
+    }
+  }
+
+  Future<void> _submitBooking() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_paymentQrUrl != null && _paymentQrUrl!.isNotEmpty && _txRefCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter the transaction reference after payment.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    setState(() => _isSubmitting = true);
+    try {
+      final res = await _client.from('room_bookings').insert({
+        'cafe_id': _cafeId,
+        'room_id': _selectedRoom!['id'],
+        'guest_name': _nameCtrl.text.trim(),
+        'guest_phone': _phoneCtrl.text.trim(),
+        'guest_email': _emailCtrl.text.trim().isEmpty ? null : _emailCtrl.text.trim(),
+        'check_in_date': DateFormat('yyyy-MM-dd').format(_checkInDate),
+        'check_out_date': DateFormat('yyyy-MM-dd').format(_checkOutDate),
+        'status': 'pending',
+        'total_amount': _totalAmount,
+        'payment_status': _txRefCtrl.text.trim().isNotEmpty ? 'pending_verification' : 'unpaid',
+        'transaction_ref': _txRefCtrl.text.trim().isEmpty ? null : _txRefCtrl.text.trim(),
+        'notes': _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+      }).select('*, rooms(room_number, type, price_per_night, floor_number)').single();
+      setState(() {
+        _completedBooking = Map<String, dynamic>.from(res);
+        _step = 99; // success
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Booking failed: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      setState(() => _isSubmitting = false);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────── BUILD
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        body: Center(
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            const CircularProgressIndicator(color: AppTheme.primaryColor),
+            const SizedBox(height: 20),
+            Text('Loading rooms...', style: TextStyle(color: Colors.grey.shade600)),
+          ]),
+        ),
+      );
     }
-
     if (_errorMessage != null) {
       return Scaffold(
         body: Center(
           child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, size: 64, color: Colors.red),
-                const SizedBox(height: 16),
-                Text(_errorMessage!, style: const TextStyle(fontSize: 18, color: AppTheme.textSecondary), textAlign: TextAlign.center),
-              ],
-            ),
+            padding: const EdgeInsets.all(32),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              const Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const SizedBox(height: 16),
+              Text(_errorMessage!, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
+            ]),
           ),
         ),
       );
     }
 
     return Scaffold(
-      backgroundColor: AppTheme.backgroundColor,
-      appBar: AppBar(
-        title: Text('$_cafeName - Room Booking', style: const TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.white,
-        foregroundColor: AppTheme.textPrimary,
-        elevation: 0,
-      ),
-      body: SingleChildScrollView(
-        child: Center(
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 900),
-            padding: const EdgeInsets.all(24.0),
-            child: _bookingSubmitted ? _buildSuccessView() : _buildBookingFlow(),
+      backgroundColor: const Color(0xFFF5F6FA),
+      body: CustomScrollView(
+        slivers: [
+          _buildHeroAppBar(),
+          SliverToBoxAdapter(
+            child: Center(
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 900),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+                child: _step == 99 ? _buildRoomPass() : _buildWizard(),
+              ),
+            ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeroAppBar() {
+    return SliverAppBar(
+      expandedHeight: 200,
+      pinned: true,
+      backgroundColor: AppTheme.primaryColor,
+      flexibleSpace: FlexibleSpaceBar(
+        title: Text(_cafeName ?? 'Hotel Booking',
+            style: const TextStyle(fontWeight: FontWeight.bold, shadows: [
+              Shadow(blurRadius: 4, color: Colors.black38)
+            ])),
+        background: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFFE65100), Color(0xFFBF360C)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          child: Stack(children: [
+            Positioned(right: -30, top: -30,
+              child: Container(width: 180, height: 180,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(0.08),
+                ))),
+            Positioned(left: -20, bottom: -20,
+              child: Container(width: 120, height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(0.06),
+                ))),
+            Align(
+              alignment: Alignment.bottomLeft,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 60),
+                child: Row(children: [
+                  const Icon(Icons.location_on, color: Colors.white70, size: 14),
+                  const SizedBox(width: 4),
+                  Text(_cafeAddress ?? 'Hotel', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                ]),
+              ),
+            ),
+          ]),
         ),
       ),
     );
   }
 
-  Widget _buildBookingFlow() {
+  Widget _buildWizard() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Date selector Card
-        Card(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          elevation: 2,
-          color: Colors.white,
-          child: Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              children: [
-                const Text('Select Booking Dates', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildDateDisplayTile('Check-in', _checkInDate),
-                    ),
-                    const Icon(Icons.arrow_forward, color: Colors.grey),
-                    Expanded(
-                      child: _buildDateDisplayTile('Check-out', _checkOutDate),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryColor,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(double.infinity, 48),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  icon: const Icon(Icons.date_range),
-                  label: const Text('Change Dates', style: TextStyle(fontSize: 16)),
-                  onPressed: () => _selectDateRange(context),
-                ),
-              ],
-            ),
-          ),
+        const SizedBox(height: 24),
+        // Step indicator
+        _buildStepIndicator(),
+        const SizedBox(height: 24),
+        // Step content
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: _buildStepContent(),
         ),
-        const SizedBox(height: 24),
-
-        // Available rooms
-        const Text('Available Rooms', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        const SizedBox(height: 12),
-        _checkingAvailability
-            ? const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
-            : _availableRooms.isEmpty
-                ? const Card(
-                    child: Padding(
-                      padding: EdgeInsets.all(32),
-                      child: Center(child: Text('No rooms available for these dates.', style: TextStyle(color: Colors.grey))),
-                    ),
-                  )
-                : ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _availableRooms.length,
-                    itemBuilder: (context, index) {
-                      final room = _availableRooms[index];
-                      final isSelected = _selectedRoom != null && _selectedRoom!['id'] == room['id'];
-
-                      return Card(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(color: isSelected ? AppTheme.primaryColor : Colors.transparent, width: 2),
-                        ),
-                        color: Colors.white,
-                        elevation: 1,
-                        margin: const EdgeInsets.symmetric(vertical: 8),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.all(16),
-                          title: Text('Room ${room['room_number']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const SizedBox(height: 4),
-                              Text('${room['type'].toString().toUpperCase()} • Max ${room['max_occupancy']} Guests'),
-                              Text('Floor ${room['floor_number']}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                            ],
-                          ),
-                          trailing: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text('Rs. ${room['price_per_night']}/night', style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryColor, fontSize: 16)),
-                              const SizedBox(height: 4),
-                              ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: isSelected ? Colors.green : AppTheme.primaryColor.withOpacity(0.1),
-                                  foregroundColor: isSelected ? Colors.white : AppTheme.primaryColor,
-                                  elevation: 0,
-                                ),
-                                onPressed: () {
-                                  setState(() => _selectedRoom = room);
-                                },
-                                child: Text(isSelected ? 'Selected' : 'Select'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-        const SizedBox(height: 24),
-
-        if (_selectedRoom != null) ...[
-          // Guest details form
-          const Text('Guest Details & Payment', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-          const SizedBox(height: 12),
-          Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            elevation: 2,
-            color: Colors.white,
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextFormField(
-                      controller: _nameCtrl,
-                      decoration: const InputDecoration(labelText: 'Guest Full Name *', border: OutlineInputBorder()),
-                      validator: (value) => value == null || value.trim().isEmpty ? 'Please enter your name' : null,
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _phoneCtrl,
-                      decoration: const InputDecoration(labelText: 'Guest Phone Number *', border: OutlineInputBorder()),
-                      keyboardType: TextInputType.phone,
-                      validator: (value) => value == null || value.trim().isEmpty ? 'Please enter your phone number' : null,
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _emailCtrl,
-                      decoration: const InputDecoration(labelText: 'Guest Email (Optional)', border: OutlineInputBorder()),
-                      keyboardType: TextInputType.emailAddress,
-                    ),
-                    const SizedBox(height: 24),
-                    const Divider(),
-                    const SizedBox(height: 16),
-                    const Text('Payment Verification', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                    const SizedBox(height: 8),
-                    Text('Total Amount: Rs. ${(_selectedRoom!['price_per_night'] * _nightsCount).toStringAsFixed(0)} for $_nightsCount night(s)',
-                        style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryColor, fontSize: 16)),
-                    const SizedBox(height: 16),
-                    if (_paymentQrUrl != null && _paymentQrUrl!.isNotEmpty) ...[
-                      const Text('Scan this QR Code using your banking app to send the payment:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
-                      const SizedBox(height: 16),
-                      Center(
-                        child: Container(
-                          height: 250,
-                          width: 250,
-                          decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(12)),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image.network(_paymentQrUrl!, fit: BoxFit.cover, errorBuilder: (ctx, err, stack) => const Center(child: Text('QR Code Loading Error'))),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      TextFormField(
-                        controller: _txRefCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Transaction Reference ID (Reference ID) *',
-                          border: OutlineInputBorder(),
-                          hintText: 'e.g. TXN983274932',
-                        ),
-                        validator: (value) => value == null || value.trim().isEmpty ? 'Please enter the transaction reference ID' : null,
-                      ),
-                      const SizedBox(height: 8),
-                      const Text('Please paste the reference ID from your banking app transaction receipt above so we can verify your booking payment.', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                    ] else ...[
-                      const Text('Note: No online QR payment has been configured by the admin yet. You can book now and pay cash at reception upon arrival.',
-                          style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
-                    ],
-                    const SizedBox(height: 32),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(double.infinity, 50),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                      onPressed: _submitBooking,
-                      child: const Text('Confirm Booking', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
       ],
     );
   }
 
-  Widget _buildDateDisplayTile(String title, DateTime date) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.backgroundColor,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: const TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
+  Widget _buildStepIndicator() {
+    final steps = ['Dates', 'Room', 'Details', 'Payment'];
+    return Row(
+      children: List.generate(steps.length * 2 - 1, (i) {
+        if (i.isOdd) {
+          return Expanded(
+            child: Container(
+              height: 2,
+              color: i ~/ 2 < _step ? AppTheme.primaryColor : Colors.grey.shade300,
+            ),
+          );
+        }
+        final idx = i ~/ 2;
+        final done = idx < _step;
+        final active = idx == _step;
+        return Column(children: [
+          Container(
+            width: 36, height: 36,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: done ? Colors.green : active ? AppTheme.primaryColor : Colors.grey.shade200,
+            ),
+            child: Center(
+              child: done
+                  ? const Icon(Icons.check, color: Colors.white, size: 18)
+                  : Text('${idx + 1}', style: TextStyle(
+                    color: active ? Colors.white : Colors.grey,
+                    fontWeight: FontWeight.bold,
+                  )),
+            ),
+          ),
           const SizedBox(height: 4),
-          Text(DateFormat('EEE, MMM dd, yyyy').format(date), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
-        ],
-      ),
+          Text(steps[idx], style: TextStyle(
+            fontSize: 11, fontWeight: active ? FontWeight.bold : FontWeight.normal,
+            color: active ? AppTheme.primaryColor : Colors.grey,
+          )),
+        ]);
+      }),
     );
   }
 
-  Widget _buildSuccessView() {
-    return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: Colors.white,
-      elevation: 3,
-      child: Padding(
-        padding: const EdgeInsets.all(32.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.check_circle, color: Colors.green, size: 80),
-            const SizedBox(height: 24),
-            const Text('Booking Request Received!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+  Widget _buildStepContent() {
+    switch (_step) {
+      case 0: return _buildStep0Dates();
+      case 1: return _buildStep1Rooms();
+      case 2: return _buildStep2Details();
+      case 3: return _buildStep3Payment();
+      default: return const SizedBox();
+    }
+  }
+
+  // ── STEP 0: Date Selection ──────────────────────────────────────────────
+  Widget _buildStep0Dates() {
+    return Column(key: const ValueKey(0), children: [
+      Card(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        elevation: 4,
+        shadowColor: Colors.black12,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(children: [
+            const Icon(Icons.date_range, color: AppTheme.primaryColor, size: 40),
             const SizedBox(height: 12),
-            const Text(
-              'Thank you for booking with us. Your booking is currently pending verification. We will process your payment and confirm your booking shortly.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppTheme.textSecondary, height: 1.5),
-            ),
+            const Text('When are you arriving?',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+            const SizedBox(height: 4),
+            const Text('Select your check-in and check-out dates',
+                style: TextStyle(color: Colors.grey, fontSize: 14)),
             const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
-            _buildInfoRow('Guest Name', _nameCtrl.text),
-            _buildInfoRow('Room Booked', 'Room ${_selectedRoom!['room_number']} (${_selectedRoom!['type'].toString().toUpperCase()})'),
-            _buildInfoRow('Check-In Date', DateFormat('MMM dd, yyyy').format(_checkInDate)),
-            _buildInfoRow('Check-Out Date', DateFormat('MMM dd, yyyy').format(_checkOutDate)),
-            _buildInfoRow('Nights Count', '$_nightsCount night(s)'),
-            _buildInfoRow('Total Amount', 'Rs. ${(_selectedRoom!['price_per_night'] * _nightsCount).toStringAsFixed(0)}'),
-            if (_txRefCtrl.text.isNotEmpty) _buildInfoRow('Transaction Ref', _txRefCtrl.text),
-            const SizedBox(height: 32),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryColor,
-                foregroundColor: Colors.white,
-                minimumSize: const Size(200, 48),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            Row(children: [
+              Expanded(child: _dateCard('Check-In', _checkInDate, Icons.login)),
+              const SizedBox(width: 12),
+              const Icon(Icons.arrow_forward, color: Colors.grey),
+              const SizedBox(width: 12),
+              Expanded(child: _dateCard('Check-Out', _checkOutDate, Icons.logout)),
+            ]),
+            const SizedBox(height: 20),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 48),
+                side: const BorderSide(color: AppTheme.primaryColor, width: 2),
+                foregroundColor: AppTheme.primaryColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              onPressed: () {
-                setState(() {
-                  _bookingSubmitted = false;
-                  _nameCtrl.clear();
-                  _phoneCtrl.clear();
-                  _emailCtrl.clear();
-                  _txRefCtrl.clear();
-                  _selectedRoom = null;
-                });
-                _initializeData();
-              },
-              child: const Text('Book Another Room'),
+              onPressed: _pickDates,
+              icon: const Icon(Icons.edit_calendar),
+              label: const Text('Change Dates', style: TextStyle(fontSize: 16)),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.nights_stay, color: AppTheme.primaryColor, size: 18),
+                const SizedBox(width: 8),
+                Text('$_nights night${_nights != 1 ? 's' : ''}',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.primaryColor,
+                        fontSize: 16)),
+              ]),
+            ),
+          ]),
+        ),
+      ),
+      const SizedBox(height: 20),
+      // Available rooms summary
+      if (_availableRooms.isNotEmpty)
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.green.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.green.shade200),
+          ),
+          child: Row(children: [
+            const Icon(Icons.check_circle, color: Colors.green),
+            const SizedBox(width: 8),
+            Text('${_availableRooms.length} room${_availableRooms.length != 1 ? 's' : ''} available for these dates',
+                style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+          ]),
+        )
+      else
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.red.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.red.shade200),
+          ),
+          child: const Row(children: [
+            Icon(Icons.info_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text('No rooms available for selected dates', style: TextStyle(color: Colors.red)),
+          ]),
+        ),
+      const SizedBox(height: 24),
+      ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.primaryColor,
+          foregroundColor: Colors.white,
+          minimumSize: const Size(double.infinity, 52),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          elevation: 4,
+          shadowColor: AppTheme.primaryColor.withOpacity(0.4),
+        ),
+        onPressed: _availableRooms.isEmpty ? null : () => setState(() => _step = 1),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Text('Browse Available Rooms', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(width: 8),
+          const Icon(Icons.arrow_forward),
+        ]),
+      ),
+    ]);
+  }
+
+  Widget _dateCard(String label, DateTime date, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F6FA),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 14, color: AppTheme.primaryColor),
+          const SizedBox(width: 4),
+          Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold)),
+        ]),
+        const SizedBox(height: 6),
+        Text(DateFormat('MMM dd').format(date),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        Text(DateFormat('EEEE, yyyy').format(date),
+            style: const TextStyle(fontSize: 11, color: Colors.grey)),
+      ]),
+    );
+  }
+
+  // ── STEP 1: Room Selection ───────────────────────────────────────────────
+  Widget _buildStep1Rooms() {
+    return Column(key: const ValueKey(1), children: [
+      // Header
+      Card(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        color: AppTheme.primaryColor,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            const Icon(Icons.bed, color: Colors.white, size: 28),
+            const SizedBox(width: 12),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${_availableRooms.length} Rooms Available',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              Text('${DateFormat('MMM d').format(_checkInDate)} → ${DateFormat('MMM d').format(_checkOutDate)} • $_nights nights',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            ]),
+          ]),
+        ),
+      ),
+      const SizedBox(height: 16),
+      ...(_availableRooms.map((room) => _buildRoomCard(room)).toList()),
+      const SizedBox(height: 8),
+      OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(double.infinity, 46),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        onPressed: () => setState(() => _step = 0),
+        icon: const Icon(Icons.arrow_back),
+        label: const Text('Change Dates'),
+      ),
+    ]);
+  }
+
+  Widget _buildRoomCard(Map<String, dynamic> room) {
+    final isSelected = _selectedRoom?['id'] == room['id'];
+    final typeIcons = {'standard': Icons.hotel, 'deluxe': Icons.star, 'suite': Icons.king_bed, 'family': Icons.family_restroom};
+    final typeColors = {'standard': Colors.blue, 'deluxe': Colors.amber, 'suite': Colors.purple, 'family': Colors.green};
+    final type = room['type'] as String? ?? 'standard';
+    final nightTotal = (room['price_per_night'] as num).toDouble() * _nights;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() => _selectedRoom = room);
+        Future.delayed(const Duration(milliseconds: 200), () {
+          setState(() => _step = 2);
+        });
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryColor : Colors.transparent,
+            width: 2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: isSelected
+                  ? AppTheme.primaryColor.withOpacity(0.15)
+                  : Colors.black.withOpacity(0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
             ),
           ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(children: [
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              // Room type icon
+              Container(
+                width: 56, height: 56,
+                decoration: BoxDecoration(
+                  color: (typeColors[type] ?? Colors.blue).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(typeIcons[type] ?? Icons.hotel,
+                    color: typeColors[type] ?? Colors.blue, size: 28),
+              ),
+              const SizedBox(width: 14),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Text('Room ${room['room_number']}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: (typeColors[type] ?? Colors.blue).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(type.toUpperCase(),
+                        style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: typeColors[type] ?? Colors.blue)),
+                  ),
+                ]),
+                const SizedBox(height: 4),
+                Row(children: [
+                  const Icon(Icons.stairs, size: 13, color: Colors.grey),
+                  const SizedBox(width: 3),
+                  Text('Floor ${room['floor_number'] ?? 1}',
+                      style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                  const SizedBox(width: 12),
+                  const Icon(Icons.person, size: 13, color: Colors.grey),
+                  const SizedBox(width: 3),
+                  Text('Max ${room['max_occupancy'] ?? 2} guests',
+                      style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                ]),
+              ])),
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text('Rs. ${(room['price_per_night'] as num).toStringAsFixed(0)}',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.primaryColor,
+                        fontSize: 18)),
+                const Text('/night', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              ]),
+            ]),
+            const SizedBox(height: 14),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('Total for $_nights nights: Rs. ${nightTotal.toStringAsFixed(0)}',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                ),
+                onPressed: () {
+                  setState(() { _selectedRoom = room; _step = 2; });
+                },
+                child: const Row(children: [
+                  Text('Select', style: TextStyle(fontWeight: FontWeight.bold)),
+                  SizedBox(width: 4),
+                  Icon(Icons.arrow_forward, size: 16),
+                ]),
+              ),
+            ]),
+          ]),
         ),
       ),
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
-        ],
+  // ── STEP 2: Guest Details ───────────────────────────────────────────────
+  Widget _buildStep2Details() {
+    return Column(key: const ValueKey(2), children: [
+      // Selected room summary
+      _selectedRoomSummaryCard(),
+      const SizedBox(height: 20),
+      Card(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        elevation: 2,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Form(
+            key: _formKey,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Guest Information',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              const SizedBox(height: 4),
+              const Text('Please fill in your details', style: TextStyle(color: Colors.grey, fontSize: 13)),
+              const SizedBox(height: 20),
+              TextFormField(
+                controller: _nameCtrl,
+                textCapitalization: TextCapitalization.words,
+                decoration: _inputDeco('Full Name *', Icons.person),
+                validator: (v) => (v?.trim().isEmpty ?? true) ? 'Please enter your name' : null,
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _phoneCtrl,
+                keyboardType: TextInputType.phone,
+                decoration: _inputDeco('Phone Number *', Icons.phone),
+                validator: (v) => (v?.trim().isEmpty ?? true) ? 'Please enter your phone' : null,
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: _inputDeco('Email Address (Optional)', Icons.email),
+              ),
+              const SizedBox(height: 14),
+              // Guest count
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text('Number of Guests', style: TextStyle(fontWeight: FontWeight.w600)),
+                Row(children: [
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline, color: AppTheme.primaryColor),
+                    onPressed: _guestCount > 1 ? () => setState(() => _guestCount--) : null,
+                  ),
+                  Container(
+                    width: 36,
+                    alignment: Alignment.center,
+                    child: Text('$_guestCount', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline, color: AppTheme.primaryColor),
+                    onPressed: _guestCount < (_selectedRoom?['max_occupancy'] as int? ?? 10)
+                        ? () => setState(() => _guestCount++)
+                        : null,
+                  ),
+                ]),
+              ]),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _notesCtrl,
+                maxLines: 2,
+                decoration: _inputDeco('Special Requests (Optional)', Icons.notes),
+              ),
+              const SizedBox(height: 24),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => setState(() => _step = 1),
+                    child: const Text('Back'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryColor,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () {
+                      if (_formKey.currentState!.validate()) setState(() => _step = 3);
+                    },
+                    child: const Text('Continue to Payment', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ]),
+            ]),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  // ── STEP 3: Payment ─────────────────────────────────────────────────────
+  Widget _buildStep3Payment() {
+    return Column(key: const ValueKey(3), children: [
+      _selectedRoomSummaryCard(),
+      const SizedBox(height: 20),
+      Card(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        elevation: 2,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Payment', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            const SizedBox(height: 20),
+            // Amount due
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [AppTheme.primaryColor, Color(0xFFBF360C)]),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(children: [
+                const Text('Total Amount Due', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                const SizedBox(height: 6),
+                Text('Rs. ${_totalAmount.toStringAsFixed(0)}',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 32)),
+                Text('$_nights night${_nights != 1 ? 's' : ''} × Rs. ${(_selectedRoom?['price_per_night'] as num?)?.toStringAsFixed(0) ?? 0}/night',
+                    style: const TextStyle(color: Colors.white60, fontSize: 12)),
+              ]),
+            ),
+            const SizedBox(height: 20),
+
+            if (_paymentQrUrl != null && _paymentQrUrl!.isNotEmpty) ...[
+              const Text('Scan QR to Pay', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              const SizedBox(height: 8),
+              const Text('Open your banking app, scan the QR below and send the exact amount.',
+                  style: TextStyle(color: Colors.grey, fontSize: 13)),
+              const SizedBox(height: 16),
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 12)],
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(_paymentQrUrl!, width: 220, height: 220, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const SizedBox(
+                          width: 220, height: 220,
+                          child: Center(child: Icon(Icons.qr_code, size: 80, color: Colors.grey)),
+                        )),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              TextFormField(
+                controller: _txRefCtrl,
+                decoration: _inputDeco('Transaction Reference ID *', Icons.receipt_long).copyWith(
+                  hintText: 'e.g. TXN123456789',
+                  helperText: 'Copy the reference/transaction ID from your banking app',
+                ),
+              ),
+            ] else ...[
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.amber.shade300),
+                ),
+                child: const Row(children: [
+                  Icon(Icons.info, color: Colors.amber),
+                  SizedBox(width: 12),
+                  Expanded(child: Text('No online QR payment configured. You can pay cash at reception on arrival.',
+                      style: TextStyle(color: Colors.black87))),
+                ]),
+              ),
+            ],
+            const SizedBox(height: 24),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 48),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () => setState(() => _step = 2),
+                  child: const Text('Back'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(double.infinity, 52),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    elevation: 4,
+                    shadowColor: Colors.green.withOpacity(0.4),
+                  ),
+                  onPressed: _isSubmitting ? null : _submitBooking,
+                  child: _isSubmitting
+                      ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                          Icon(Icons.lock),
+                          SizedBox(width: 8),
+                          Text('Confirm Booking', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        ]),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _selectedRoomSummaryCard() {
+    if (_selectedRoom == null) return const SizedBox();
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryColor.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.primaryColor.withOpacity(0.2)),
+      ),
+      child: Row(children: [
+        const Icon(Icons.hotel, color: AppTheme.primaryColor),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Room ${_selectedRoom!['room_number']} — ${(_selectedRoom!['type'] as String).toUpperCase()}',
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text('${DateFormat('MMM d').format(_checkInDate)} → ${DateFormat('MMM d').format(_checkOutDate)} · $_nights nights',
+              style: const TextStyle(color: Colors.grey, fontSize: 12)),
+        ])),
+        Text('Rs. ${_totalAmount.toStringAsFixed(0)}',
+            style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryColor, fontSize: 16)),
+      ]),
+    );
+  }
+
+  InputDecoration _inputDeco(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, size: 20),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      filled: true,
+      fillColor: const Color(0xFFF8F9FA),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey.shade200),
       ),
     );
+  }
+
+  // ── SUCCESS: Room Pass ──────────────────────────────────────────────────
+  Widget _buildRoomPass() {
+    final b = _completedBooking!;
+    final room = b['rooms'] as Map<String, dynamic>;
+    final bookingId = b['id'] as String;
+    final shortId = bookingId.substring(0, 8).toUpperCase();
+
+    return Column(children: [
+      const SizedBox(height: 16),
+      // Success banner
+      Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(colors: [Colors.green, Color(0xFF2E7D32)]),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: const Column(children: [
+          Icon(Icons.check_circle, color: Colors.white, size: 56),
+          SizedBox(height: 12),
+          Text('Booking Submitted!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22)),
+          SizedBox(height: 6),
+          Text('Your request is pending confirmation from the hotel staff.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70, fontSize: 13)),
+        ]),
+      ),
+      const SizedBox(height: 20),
+      // Room Pass Card
+      Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, 8)),
+          ],
+        ),
+        child: Column(children: [
+          // Header
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(colors: [AppTheme.primaryColor, Color(0xFFBF360C)]),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(children: [
+              Text(_cafeName ?? 'Hotel', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
+              const SizedBox(height: 4),
+              const Text('ROOM BOOKING PASS', style: TextStyle(color: Colors.white70, fontSize: 12, letterSpacing: 2)),
+            ]),
+          ),
+          // QR Code
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey.shade100),
+                ),
+                child: QrImageView(data: bookingId, version: QrVersions.auto, size: 180),
+              ),
+              const SizedBox(height: 10),
+              Text('Booking ID: $shortId',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, letterSpacing: 2)),
+              const SizedBox(height: 4),
+              const Text('Show this QR to hotel staff at check-in',
+                  style: TextStyle(color: Colors.grey, fontSize: 12)),
+            ]),
+          ),
+          // Divider with scissors
+          Row(children: [
+            const SizedBox(width: 8),
+            const Icon(Icons.cut, color: Colors.grey, size: 16),
+            Expanded(child: DashedDivider()),
+            const SizedBox(width: 8),
+          ]),
+          // Booking details
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(children: [
+              _passRow('Guest Name', b['guest_name']),
+              _passRow('Phone', b['guest_phone']),
+              _passRow('Room', 'Room ${room['room_number']} (${(room['type'] as String).toUpperCase()})'),
+              _passRow('Floor', 'Floor ${room['floor_number'] ?? 1}'),
+              _passRow('Check-In', b['check_in_date']),
+              _passRow('Check-Out', b['check_out_date']),
+              _passRow('Nights', '$_nights night(s)'),
+              const Divider(height: 20),
+              _passRow('Total Amount', 'Rs. ${b['total_amount']?.toStringAsFixed(0) ?? '0'}',
+                  highlight: true),
+              _passRow('Status', 'Pending Confirmation', color: Colors.orange),
+            ]),
+          ),
+          // Bottom note
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
+            ),
+            child: Column(children: [
+              const Text('Please save a screenshot of this booking pass.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey, fontSize: 12)),
+              const SizedBox(height: 4),
+              SelectableText(
+                'Ref: $bookingId',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.grey, fontSize: 10),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+      const SizedBox(height: 20),
+      // Copy booking ID button
+      OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(double.infinity, 48),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        onPressed: () {
+          Clipboard.setData(ClipboardData(text: bookingId));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Booking ID copied!')),
+          );
+        },
+        icon: const Icon(Icons.copy),
+        label: const Text('Copy Booking ID'),
+      ),
+      const SizedBox(height: 12),
+      ElevatedButton.icon(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.primaryColor,
+          foregroundColor: Colors.white,
+          minimumSize: const Size(double.infinity, 48),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        onPressed: () {
+          setState(() {
+            _step = 0;
+            _completedBooking = null;
+            _selectedRoom = null;
+            _nameCtrl.clear();
+            _phoneCtrl.clear();
+            _emailCtrl.clear();
+            _txRefCtrl.clear();
+            _notesCtrl.clear();
+          });
+          _loadRooms();
+        },
+        icon: const Icon(Icons.add),
+        label: const Text('Book Another Room'),
+      ),
+    ]);
+  }
+
+  Widget _passRow(String label, String value, {bool highlight = false, Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5.0),
+      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+        Text(value, style: TextStyle(
+          fontWeight: highlight ? FontWeight.bold : FontWeight.w600,
+          color: color ?? (highlight ? AppTheme.primaryColor : AppTheme.textPrimary),
+          fontSize: highlight ? 16 : 13,
+        )),
+      ]),
+    );
+  }
+}
+
+class DashedDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (ctx, constraints) {
+      final dashCount = (constraints.constrainWidth() / 8).floor();
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: List.generate(dashCount, (_) => Container(
+          width: 4, height: 1, color: Colors.grey.shade300,
+        )),
+      );
+    });
   }
 }
