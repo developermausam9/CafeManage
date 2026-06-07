@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/presentation/theme/app_theme.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../auth/presentation/providers/subscription_provider.dart';
 import '../../../../core/network/supabase_config.dart';
 
 class DeliveryManagementScreen extends StatefulWidget {
@@ -56,6 +57,7 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
           .order('created_at', ascending: false);
 
       final deliveries = List<Map<String, dynamic>>.from(data);
+      debugPrint('[DeliveryManagementScreen] Loaded deliveries: ${deliveries.length} for cafeId: $_cafeId');
       setState(() {
         _pending = deliveries.where((d) => d['status'] == 'pending').toList();
         _preparing = deliveries.where((d) => d['status'] == 'preparing').toList();
@@ -247,6 +249,11 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
 
   @override
   Widget build(BuildContext context) {
+    final subProvider = context.watch<SubscriptionProvider>();
+    if (!subProvider.hasStandardOrPremium) {
+      return _buildDeliveriesPaywall();
+    }
+
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
@@ -285,6 +292,73 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
                 _buildList(_history, status: 'history'),
               ],
             ),
+    );
+  }
+
+  Widget _buildDeliveriesPaywall() {
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 500),
+        padding: const EdgeInsets.all(32.0),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.shade200,
+              blurRadius: 10,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.delivery_dining,
+                size: 64,
+                color: AppTheme.primaryColor,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Unlock Delivery Tracking System',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Upgrade to the Standard or Premium subscription package to enable online food delivery tracking, rider assignment, real-time status polling, and notification integrations.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textSecondary, height: 1.5, fontSize: 14),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please contact Super Admin in staff panel to upgrade plan to Standard or Premium.'),
+                    backgroundColor: AppTheme.primaryColor,
+                  ),
+                );
+              },
+              child: const Text('Upgrade to Standard/Premium Tier', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

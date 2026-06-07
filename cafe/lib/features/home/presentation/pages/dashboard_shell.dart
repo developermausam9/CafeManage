@@ -87,7 +87,7 @@ class DashboardShellState extends State<DashboardShell> {
           _NavigationItem(icon: Icons.table_restaurant, label: 'Tables'),
           _NavigationItem(icon: Icons.bed_outlined, label: 'Rooms'),
           _NavigationItem(icon: Icons.book_online, label: 'Bookings'),
-          if (hasStandard) _NavigationItem(icon: Icons.delivery_dining, label: 'Deliveries'),
+          _NavigationItem(icon: Icons.delivery_dining, label: 'Deliveries'),
           _NavigationItem(icon: Icons.menu_book, label: 'Menu'),
 
           if (hasStandard) _NavigationItem(icon: Icons.inventory_2, label: 'Inventory'),
@@ -103,7 +103,7 @@ class DashboardShellState extends State<DashboardShell> {
           _NavigationItem(icon: Icons.receipt_long, label: 'Billing'),
           _NavigationItem(icon: Icons.history, label: 'Order History'),
           _NavigationItem(icon: Icons.restaurant_menu, label: 'Kitchen'),
-          if (hasStandard) _NavigationItem(icon: Icons.delivery_dining, label: 'Deliveries'),
+          _NavigationItem(icon: Icons.delivery_dining, label: 'Deliveries'),
           _NavigationItem(icon: Icons.book_online, label: 'Bookings'),
         ];
       case 'waiter':

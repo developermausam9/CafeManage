@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../../../core/presentation/theme/app_theme.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../auth/presentation/providers/subscription_provider.dart';
 import '../../../../core/network/supabase_config.dart';
 
 class BookingsManagementScreen extends StatefulWidget {
@@ -455,6 +456,11 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen>
   // ── BUILD ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final subProvider = context.watch<SubscriptionProvider>();
+    if (!subProvider.hasPremium) {
+      return _buildPremiumPaywall();
+    }
+
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
@@ -783,5 +789,72 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen>
       default:
         return Colors.grey;
     }
+  }
+
+  Widget _buildPremiumPaywall() {
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 500),
+        padding: const EdgeInsets.all(32.0),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.shade200,
+              blurRadius: 10,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.bed_outlined,
+                size: 64,
+                color: AppTheme.primaryColor,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Unlock Room & Booking Systems',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Upgrade to the Premium subscription package to enable full lodging management, self-service QR room ordering, public date booking, and QR payment verification workflows.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textSecondary, height: 1.5, fontSize: 14),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please contact Super Admin in staff panel to upgrade plan to Premium.'),
+                    backgroundColor: AppTheme.primaryColor,
+                  ),
+                );
+              },
+              child: const Text('Upgrade to Premium Tier', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

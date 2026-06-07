@@ -136,6 +136,18 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
         }
       }
 
+      // Check Cafe subscription plan (Must be Standard or Premium)
+      final subRes = await _client
+          .from('subscriptions')
+          .select('plan_type, is_active')
+          .eq('cafe_id', _cafeId!)
+          .maybeSingle();
+      final planType = subRes != null ? subRes['plan_type'] as String : 'Basic';
+      final isActive = subRes != null ? subRes['is_active'] as bool : true;
+      if (!isActive || (planType != 'Standard' && planType != 'Premium')) {
+        throw Exception('Online food delivery tracking is not enabled for this café. Please contact the administrator.');
+      }
+
       // Load Settings (for payment QR)
       final settings = await _client
           .from('settings')
@@ -333,18 +345,64 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
     }
 
     if (_errorMessage != null) {
+      final isSubError = _errorMessage!.contains('not enabled');
       return Scaffold(
+        backgroundColor: Colors.grey.shade50,
         body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 500),
+            margin: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 10,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.error_outline, size: 60, color: Colors.red),
-                const SizedBox(height: 16),
-                Text(_errorMessage!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: isSubError ? AppTheme.primaryColor.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isSubError ? Icons.delivery_dining : Icons.error_outline,
+                    size: 64,
+                    color: isSubError ? AppTheme.primaryColor : Colors.red,
+                  ),
+                ),
                 const SizedBox(height: 24),
-                ElevatedButton(onPressed: _initializeData, child: const Text('Retry')),
+                Text(
+                  isSubError ? 'Delivery Service Unavailable' : 'Error Occurred',
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _errorMessage!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: AppTheme.textSecondary, height: 1.5, fontSize: 14),
+                ),
+                const SizedBox(height: 32),
+                if (!isSubError)
+                  ElevatedButton(
+                    onPressed: _initializeData,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Retry'),
+                  ),
               ],
             ),
           ),
