@@ -15,6 +15,7 @@ import '../../../operations/presentation/pages/dues_screen.dart';
 import '../../../operations/presentation/pages/table_management_screen.dart';
 import '../../../operations/presentation/pages/room_management_screen.dart';
 import '../../../operations/presentation/pages/bookings_management_screen.dart';
+import '../../../operations/presentation/pages/delivery_management_screen.dart';
 
 import '../../../orders/presentation/pages/order_history_screen.dart';
 import '../../../settings/presentation/pages/settings_screen.dart';
@@ -86,6 +87,7 @@ class DashboardShellState extends State<DashboardShell> {
           _NavigationItem(icon: Icons.table_restaurant, label: 'Tables'),
           _NavigationItem(icon: Icons.bed_outlined, label: 'Rooms'),
           _NavigationItem(icon: Icons.book_online, label: 'Bookings'),
+          if (hasStandard) _NavigationItem(icon: Icons.delivery_dining, label: 'Deliveries'),
           _NavigationItem(icon: Icons.menu_book, label: 'Menu'),
 
           if (hasStandard) _NavigationItem(icon: Icons.inventory_2, label: 'Inventory'),
@@ -101,6 +103,7 @@ class DashboardShellState extends State<DashboardShell> {
           _NavigationItem(icon: Icons.receipt_long, label: 'Billing'),
           _NavigationItem(icon: Icons.history, label: 'Order History'),
           _NavigationItem(icon: Icons.restaurant_menu, label: 'Kitchen'),
+          if (hasStandard) _NavigationItem(icon: Icons.delivery_dining, label: 'Deliveries'),
           _NavigationItem(icon: Icons.book_online, label: 'Bookings'),
         ];
       case 'waiter':
@@ -534,6 +537,7 @@ class DashboardShellState extends State<DashboardShell> {
     if (label == 'Tables') return const TableManagementScreen();
     if (label == 'Rooms') return const RoomManagementScreen();
     if (label == 'Bookings') return const BookingsManagementScreen();
+    if (label == 'Deliveries') return const DeliveryManagementScreen();
 
     if (label == 'Inventory') return const InventoryScreen();
     if (label == 'Suppliers') return const SuppliersScreen();

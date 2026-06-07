@@ -8,6 +8,7 @@ import '../../../super_admin/presentation/pages/super_admin_shell.dart';
 import '../../../super_admin/presentation/pages/subscription_expired_screen.dart';
 import '../../../operations/presentation/pages/customer_booking_screen.dart';
 import '../../../menu/presentation/pages/customer_menu_screen.dart';
+import '../../../operations/presentation/pages/customer_delivery_screen.dart';
 
 class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
@@ -32,12 +33,16 @@ class _AuthWrapperState extends State<AuthWrapper> {
     final fragment = Uri.base.fragment;
     final isBookingRoute = path.contains('/book') || fragment.contains('/book') || path == 'book';
     final isOrderingRoute = path.contains('/order') || fragment.contains('/order') || path == 'order';
+    final isDeliveryRoute = path.contains('/delivery') || fragment.contains('/delivery') || path == 'delivery';
 
     if (isBookingRoute) {
       return const CustomerBookingScreen();
     }
     if (isOrderingRoute) {
       return const CustomerMenuScreen();
+    }
+    if (isDeliveryRoute) {
+      return const CustomerDeliveryScreen();
     }
 
     return Consumer<AuthProvider>(
