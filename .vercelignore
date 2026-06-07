@@ -1,0 +1,13 @@
+**/build/
+**/.dart_tool/
+**/.git/
+**/.gradle/
+**/.vercel/
+**/.vscode/
+**/android/
+**/ios/
+**/macos/
+**/windows/
+**/linux/
+**/.DS_Store
+**/.idea/
