@@ -241,8 +241,14 @@ class KitchenProvider extends ChangeNotifier {
           .eq('id', orderId);
       
       try {
-        final orderRes = await _client.from('orders').select('*, table:tables!table_id(name)').eq('id', orderId).single();
-        final tableName = orderRes['table']?['name'] ?? 'Takeaway';
+        final orderRes = await _client.from('orders').select('*, table:tables!table_id(name), room:rooms!room_id(room_number)').eq('id', orderId).single();
+        final isRoomService = orderRes['room_id'] != null;
+        final displayName = isRoomService 
+            ? 'Room ${orderRes['room']?['room_number'] ?? 'Unknown'}' 
+            : (orderRes['table']?['name'] != null ? 'Table ${orderRes['table']['name']}' : 'Takeaway');
+        final cleanTableNo = isRoomService 
+            ? 'Room ${orderRes['room']?['room_number'] ?? 'Unknown'}'
+            : (orderRes['table']?['name'] ?? 'Takeaway');
         final cafeId = orderRes['cafe_id'] as String;
         
         if (newStatus == 'preparing') {
@@ -250,18 +256,24 @@ class KitchenProvider extends ChangeNotifier {
             'cafe_id': cafeId,
             'recipient_role': 'waiter',
             'title': 'Order Preparing',
-            'message': 'Kitchen has started preparing items for Table $tableName.',
+            'message': 'Kitchen has started preparing items for $displayName.',
             'type': 'preparing',
-            'metadata': {'order_id': orderId},
+            'metadata': {
+              'order_id': orderId,
+              'table_no': cleanTableNo,
+            },
           });
         } else if (newStatus == 'ready') {
           await _client.from('notifications').insert({
             'cafe_id': cafeId,
             'recipient_role': 'waiter',
             'title': 'Order Ready to Serve',
-            'message': 'Order is READY in the kitchen for Table $tableName. Please serve!',
+            'message': 'Order is READY in the kitchen for $displayName. Please serve!',
             'type': 'kitchen_ready',
-            'metadata': {'order_id': orderId},
+            'metadata': {
+              'order_id': orderId,
+              'table_no': cleanTableNo,
+            },
           });
         }
       } catch (ex) {

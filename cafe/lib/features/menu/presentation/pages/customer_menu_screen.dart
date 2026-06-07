@@ -228,17 +228,41 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
         'id': const Uuid().v4(),
         'order_id': orderId,
         'product_id': item.id,
+        'product_name': item.name,
         'quantity': item.quantity,
-        'price': item.price,
-        'status': 'added',
+        'unit_price': item.price,
+        'total_price': item.price * item.quantity,
+        'status': 'sent',
       }).toList();
       await _client.from('order_items').insert(items);
 
+      // Send notification to kitchen role
       await _client.from('notifications').insert({
         'cafe_id': _cafeId,
+        'recipient_role': 'kitchen',
         'title': 'New Room Service Order',
         'message': 'Room $_roomNumber placed an order for Rs. ${grandTotal.toStringAsFixed(0)}',
-        'type': 'new_order',
+        'type': 'kot_received',
+        'metadata': {
+          'order_id': orderId,
+          'table_no': 'Room $_roomNumber',
+          'item_count': _cartCount,
+        },
+        'is_read': false,
+      });
+
+      // Send notification to waiter role
+      await _client.from('notifications').insert({
+        'cafe_id': _cafeId,
+        'recipient_role': 'waiter',
+        'title': 'New Room Service Order',
+        'message': 'Room $_roomNumber placed an order for Rs. ${grandTotal.toStringAsFixed(0)}',
+        'type': 'kot_received',
+        'metadata': {
+          'order_id': orderId,
+          'table_no': 'Room $_roomNumber',
+          'item_count': _cartCount,
+        },
         'is_read': false,
       });
 
@@ -276,7 +300,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
     if (_cafeId == null) return;
     if (!silent) setState(() => _loadingOrders = true);
     try {
-      dynamic query = _client.from('orders').select('id, status, grand_total, created_at, order_items(quantity, price, products(name))');
+      dynamic query = _client.from('orders').select('id, status, grand_total, created_at, order_items(quantity, unit_price, products(name))');
       if (_bookingId != null && _bookingId!.isNotEmpty) {
         query = query.eq('room_booking_id', _bookingId!);
       } else {
@@ -569,9 +593,12 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
         : '';
 
     final statusConfig = {
-      'pending': (Colors.orange, Icons.hourglass_empty, 'Pending'),
-      'kitchen': (Colors.blue, Icons.restaurant, 'Preparing 🍳'),
-      'completed': (Colors.green, Icons.check_circle, 'Ready! 🎉'),
+      'pending': (Colors.orange, Icons.hourglass_empty, 'Received'),
+      'kitchen_sent': (Colors.orange, Icons.hourglass_empty, 'Received'),
+      'preparing': (Colors.blue, Icons.restaurant, 'Preparing 🍳'),
+      'ready': (Colors.green, Icons.check_circle, 'Ready! 🎉'),
+      'served': (Colors.green, Icons.check_circle, 'Served'),
+      'completed': (Colors.green, Icons.check_circle, 'Completed'),
       'cancelled': (Colors.red, Icons.cancel, 'Cancelled'),
     };
     final cfg = statusConfig[status] ?? (Colors.grey, Icons.info, status);
@@ -605,7 +632,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
             final prod = item['products'];
             final name = prod?['name'] ?? 'Item';
             final qty = item['quantity'] as int? ?? 1;
-            final price = (item['price'] as num?)?.toDouble() ?? 0;
+            final price = (item['unit_price'] as num?)?.toDouble() ?? 0;
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(children: [
@@ -635,8 +662,14 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
   }
 
   Widget _buildStatusProgress(String status) {
-    final steps = ['pending', 'kitchen', 'completed'];
-    final idx = steps.indexOf(status);
+    final steps = ['pending', 'preparing', 'ready'];
+    String mappedStatus = 'pending';
+    if (status == 'preparing') {
+      mappedStatus = 'preparing';
+    } else if (status == 'ready' || status == 'served' || status == 'completed') {
+      mappedStatus = 'ready';
+    }
+    final idx = steps.indexOf(mappedStatus);
     return Row(children: List.generate(steps.length * 2 - 1, (i) {
       if (i.isOdd) {
         final filled = i ~/ 2 < idx;

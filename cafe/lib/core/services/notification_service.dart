@@ -261,9 +261,10 @@ class NotificationService {
   // ════════════════════════════════════════════════════════════════════════════
 
   Future<void> showKotReceived(String tableNo, int itemCount) async {
+    final cleanTable = tableNo.toLowerCase().startsWith('room') ? tableNo : 'Table $tableNo';
     await _show(
       id: _idKot,
-      title: '🍽️ New KOT — Table $tableNo',
+      title: '🍽️ New KOT — $cleanTable',
       body: '$itemCount item(s) sent to kitchen. Start preparing!',
       channelId: _chKot,
       payload: 'kot:$tableNo',
@@ -271,9 +272,10 @@ class NotificationService {
   }
 
   Future<void> showItemAddedAfterKot(String tableNo, String itemName) async {
+    final cleanTable = tableNo.toLowerCase().startsWith('room') ? tableNo : 'Table $tableNo';
     await _show(
       id: _idItemAdded,
-      title: '➕ Item Added — Table $tableNo',
+      title: '➕ Item Added — $cleanTable',
       body: '"$itemName" was added after KOT. Please prepare this additional item.',
       channelId: _chKot,
       payload: 'item_added:$tableNo',
@@ -281,9 +283,10 @@ class NotificationService {
   }
 
   Future<void> showItemCancelledAfterKot(String tableNo, String itemName, String reason) async {
+    final cleanTable = tableNo.toLowerCase().startsWith('room') ? tableNo : 'Table $tableNo';
     await _show(
       id: _idItemCancelled,
-      title: '❌ Item Cancelled — Table $tableNo',
+      title: '❌ Item Cancelled — $cleanTable',
       body: '"$itemName" was CANCELLED. Reason: $reason. Stop preparing if not started.',
       channelId: _chKot,
       payload: 'item_cancelled:$tableNo',
@@ -291,10 +294,11 @@ class NotificationService {
   }
 
   Future<void> showOrderCancelled(String tableNo, String reason) async {
+    final cleanTable = tableNo.toLowerCase().startsWith('room') ? tableNo : 'Table $tableNo';
     await _show(
       id: _idOrderCancelled,
-      title: '🚫 Order Cancelled — Table $tableNo',
-      body: 'Full order for Table $tableNo was cancelled. Reason: $reason.',
+      title: '🚫 Order Cancelled — $cleanTable',
+      body: 'Full order for $cleanTable was cancelled. Reason: $reason.',
       channelId: _chKot,
       payload: 'order_cancelled:$tableNo',
     );
@@ -305,40 +309,44 @@ class NotificationService {
   // ════════════════════════════════════════════════════════════════════════════
 
   Future<void> showKitchenPreparing(String tableNo) async {
+    final cleanTable = tableNo.toLowerCase().startsWith('room') ? tableNo : 'Table $tableNo';
     await _show(
       id: _idKitchenPreparing,
-      title: '👨‍🍳 Kitchen Preparing — Table $tableNo',
-      body: 'The kitchen has started preparing the order for Table $tableNo.',
+      title: '👨‍🍳 Kitchen Preparing — $cleanTable',
+      body: 'The kitchen has started preparing the order for $cleanTable.',
       channelId: _chKitchen,
       payload: 'preparing:$tableNo',
     );
   }
 
   Future<void> showKitchenReady(String tableNo) async {
+    final cleanTable = tableNo.toLowerCase().startsWith('room') ? tableNo : 'Table $tableNo';
     await _show(
       id: _idKitchenReady,
-      title: '✅ Order Ready — Table $tableNo',
-      body: 'Order for Table $tableNo is READY in the kitchen. Please serve now!',
+      title: '✅ Order Ready — $cleanTable',
+      body: 'Order for $cleanTable is READY in the kitchen. Please serve now!',
       channelId: _chKitchen,
       payload: 'kitchen_ready:$tableNo',
     );
   }
 
   Future<void> showReadyToServe(String tableNo) async {
+    final cleanTable = tableNo.toLowerCase().startsWith('room') ? tableNo : 'Table $tableNo';
     await _show(
       id: _idReadyToServe,
-      title: '🛎️ Ready to Serve — Table $tableNo',
-      body: 'All items for Table $tableNo are ready. Time to serve the customer!',
+      title: '🛎️ Ready to Serve — $cleanTable',
+      body: 'All items for $cleanTable are ready. Time to serve the customer!',
       channelId: _chKitchen,
       payload: 'ready_to_serve:$tableNo',
     );
   }
 
   Future<void> showBillingPending(String tableNo, double amount) async {
+    final cleanTable = tableNo.toLowerCase().startsWith('room') ? tableNo : 'Table $tableNo';
     await _show(
       id: _idBillingPending,
-      title: '🧾 Billing Pending — Table $tableNo',
-      body: 'Table $tableNo is requesting the bill. Total: Rs. ${amount.toStringAsFixed(2)}',
+      title: '🧾 Billing Pending — $cleanTable',
+      body: '$cleanTable is requesting the bill. Total: Rs. ${amount.toStringAsFixed(2)}',
       channelId: _chBilling,
       payload: 'billing_pending:$tableNo',
     );
@@ -349,10 +357,11 @@ class NotificationService {
   // ════════════════════════════════════════════════════════════════════════════
 
   Future<void> showOrderReadyForBilling(String tableNo, double amount) async {
+    final cleanTable = tableNo.toLowerCase().startsWith('room') ? tableNo : 'Table $tableNo';
     await _show(
       id: _idOrderReadyForBilling,
-      title: '💳 Ready for Billing — Table $tableNo',
-      body: 'Table $tableNo order is served. Amount due: Rs. ${amount.toStringAsFixed(2)}',
+      title: '💳 Ready for Billing — $cleanTable',
+      body: '$cleanTable order is served. Amount due: Rs. ${amount.toStringAsFixed(2)}',
       channelId: _chBilling,
       payload: 'ready_for_billing:$tableNo',
     );
@@ -369,10 +378,11 @@ class NotificationService {
   }
 
   Future<void> showReceiptPrintFailed(String tableNo) async {
+    final cleanTable = tableNo.toLowerCase().startsWith('room') ? tableNo : 'Table $tableNo';
     await _show(
       id: _idReceiptPrintFailed,
-      title: '🖨️ Print Failed — Table $tableNo',
-      body: 'Receipt for Table $tableNo could not be printed. Check printer connection.',
+      title: '🖨️ Print Failed — $cleanTable',
+      body: 'Receipt for $cleanTable could not be printed. Check printer connection.',
       channelId: _chSystem,
     );
   }
