@@ -80,14 +80,25 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
     return params;
   }
 
+  bool _isValidUuid(String? s) {
+    if (s == null || s.isEmpty) return false;
+    final uuidRegex = RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+      caseSensitive: false,
+    );
+    return uuidRegex.hasMatch(s);
+  }
+
   Future<void> _initializeData() async {
     setState(() { _isLoading = true; _errorMessage = null; });
     final params = _getQueryParams();
-    _cafeId = params['cafe_id'];
-    _roomId = params['room_id'];
-    _bookingId = params['booking_id'];
+    final rawCafeId = params['cafe_id'];
+    final rawRoomId = params['room_id'];
+    _bookingId = _isValidUuid(params['booking_id']) ? params['booking_id'] : null;
+    _cafeId = _isValidUuid(rawCafeId) ? rawCafeId : null;
+    _roomId = _isValidUuid(rawRoomId) ? rawRoomId : null;
 
-    if (_cafeId == null || _cafeId!.isEmpty || _roomId == null || _roomId!.isEmpty) {
+    if (_cafeId == null || _roomId == null) {
       setState(() {
         _errorMessage = 'Invalid QR code. Please ask staff to re-print the room QR.';
         _isLoading = false;

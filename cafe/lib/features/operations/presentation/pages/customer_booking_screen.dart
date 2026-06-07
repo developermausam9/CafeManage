@@ -80,25 +80,68 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
     return params;
   }
 
+  /// Returns true if the given string is a valid UUID v4 format
+  bool _isValidUuid(String? s) {
+    if (s == null || s.isEmpty) return false;
+    final uuidRegex = RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+      caseSensitive: false,
+    );
+    return uuidRegex.hasMatch(s);
+  }
+
   Future<void> _initializeData() async {
     setState(() { _isLoading = true; _errorMessage = null; });
     final params = _getQueryParams();
-    _cafeId = params['cafe_id'];
+    final rawCafeId = params['cafe_id'];
+
+    // If cafe_id is missing or not a valid UUID, auto-detect the first cafe
+    if (!_isValidUuid(rawCafeId)) {
+      _cafeId = null; // force auto-detect
+    } else {
+      _cafeId = rawCafeId;
+    }
+
     try {
-      if (_cafeId == null || _cafeId!.isEmpty) {
-        final cafes = await _client.from('cafes').select('id, name, phone, address').limit(1);
+      if (_cafeId == null) {
+        // Auto-detect: load first available cafe
+        final cafes = await _client
+            .from('cafes')
+            .select('id, name, phone, address')
+            .limit(1);
         if (cafes.isEmpty) throw Exception('No hotel configured.');
         _cafeId = cafes.first['id'];
         _cafeName = cafes.first['name'];
         _cafePhone = cafes.first['phone'];
         _cafeAddress = cafes.first['address'];
       } else {
-        final cafe = await _client.from('cafes').select('name, phone, address').eq('id', _cafeId!).single();
-        _cafeName = cafe['name'];
-        _cafePhone = cafe['phone'];
-        _cafeAddress = cafe['address'];
+        final cafe = await _client
+            .from('cafes')
+            .select('name, phone, address')
+            .eq('id', _cafeId!)
+            .maybeSingle();
+        if (cafe == null) {
+          // UUID provided but cafe not found — fall back to auto-detect
+          final cafes = await _client
+              .from('cafes')
+              .select('id, name, phone, address')
+              .limit(1);
+          if (cafes.isEmpty) throw Exception('No hotel configured.');
+          _cafeId = cafes.first['id'];
+          _cafeName = cafes.first['name'];
+          _cafePhone = cafes.first['phone'];
+          _cafeAddress = cafes.first['address'];
+        } else {
+          _cafeName = cafe['name'];
+          _cafePhone = cafe['phone'];
+          _cafeAddress = cafe['address'];
+        }
       }
-      final settings = await _client.from('settings').select('payment_qr_url').eq('cafe_id', _cafeId!).maybeSingle();
+      final settings = await _client
+          .from('settings')
+          .select('payment_qr_url')
+          .eq('cafe_id', _cafeId!)
+          .maybeSingle();
       if (settings != null) _paymentQrUrl = settings['payment_qr_url'];
       await _loadRooms();
     } catch (e) {
