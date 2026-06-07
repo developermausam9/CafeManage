@@ -245,6 +245,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final bookingUrl = cafeId != null
         ? '$baseUrl/#/book?cafe_id=$cafeId'
         : '$baseUrl/#/book';
+    final deliveryUrl = cafeId != null
+        ? '$baseUrl/#/delivery?cafe_id=$cafeId'
+        : '$baseUrl/#/delivery';
 
     void copyUrl(String url, String label) {
       Clipboard.setData(ClipboardData(text: url));
@@ -321,6 +324,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onPressed: () => copyUrl(bookingUrl, 'Booking Portal'),
                     icon: const Icon(Icons.copy, size: 18),
                     color: Colors.blue,
+                    tooltip: 'Copy URL',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Divider(height: 1),
+            const SizedBox(height: 16),
+
+            // Food Ordering & Delivery Portal
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.delivery_dining, color: Colors.green, size: 20),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Online Food Ordering & Delivery Portal',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      Text('Share this link with customers to order food and track deliveries online',
+                          style: TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      deliveryUrl,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        color: Colors.green.shade800,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: () => copyUrl(deliveryUrl, 'Delivery Portal'),
+                    icon: const Icon(Icons.copy, size: 18),
+                    color: Colors.green,
                     tooltip: 'Copy URL',
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
