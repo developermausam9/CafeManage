@@ -310,12 +310,14 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                       const SizedBox(height: 16),
 
                       // Summary Breakups
-                      _buildSummaryRow('Subtotal:', resolvedOrder.subtotal),
+                      _buildSummaryRow(resolvedOrder.roomId != null ? 'Food Subtotal:' : 'Subtotal:', resolvedOrder.subtotal),
                       if (resolvedOrder.discount > 0)
                         _buildSummaryRow('Discount:', -resolvedOrder.discount, isDiscount: true),
                       _buildSummaryRow('VAT (13%):', resolvedOrder.taxAmount),
                       if (resolvedOrder.serviceCharge > 0)
                         _buildSummaryRow('Service Charge:', resolvedOrder.serviceCharge),
+                      if (resolvedOrder.roomCharge != null && resolvedOrder.roomCharge! > 0)
+                        _buildSummaryRow('Room Charges:', resolvedOrder.roomCharge!),
                       const Divider(height: 1, thickness: 1.5, color: Colors.grey),
                       const SizedBox(height: 12),
                       _buildSummaryRow('Grand Total:', resolvedOrder.grandTotal, isBold: true, size: 20),

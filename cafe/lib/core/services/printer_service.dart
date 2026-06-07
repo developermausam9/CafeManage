@@ -131,6 +131,12 @@ class PrinterService {
       PosColumn(text: 'VAT (13%):', width: 6),
       PosColumn(text: order.taxAmount.toStringAsFixed(2), width: 6, styles: const PosStyles(align: PosAlign.right)),
     ]);
+    if (order.roomCharge != null && order.roomCharge! > 0) {
+      bytes += generator.row([
+        PosColumn(text: 'Room Charges:', width: 6),
+        PosColumn(text: order.roomCharge!.toStringAsFixed(2), width: 6, styles: const PosStyles(align: PosAlign.right)),
+      ]);
+    }
     bytes += generator.hr();
     
     bytes += generator.row([

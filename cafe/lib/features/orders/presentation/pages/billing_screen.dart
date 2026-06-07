@@ -73,7 +73,7 @@ class _BillingScreenState extends State<BillingScreen> {
     try {
       final res = await _client
           .from('orders')
-          .select('*, waiter:profiles!waiter_id(full_name), table:tables!table_id(name)')
+          .select('*, waiter:profiles!waiter_id(full_name), table:tables!table_id(name), room:rooms!room_id(room_number), room_booking:room_bookings!room_booking_id(room_charge)')
           .eq('cafe_id', cafeId)
           .inFilter('status', ['served', 'ready', 'billed', 'kitchen_sent'])
           .order('created_at', ascending: false);
@@ -339,12 +339,18 @@ class _BillingScreenState extends State<BillingScreen> {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: order.type == 'dine_in' ? Colors.indigo.shade50 : Colors.teal.shade50,
+                color: order.roomId != null
+                    ? Colors.blue.shade50
+                    : (order.type == 'dine_in' ? Colors.indigo.shade50 : Colors.teal.shade50),
                 shape: BoxShape.circle,
               ),
               child: Icon(
-                order.type == 'dine_in' ? Icons.table_restaurant : Icons.takeout_dining,
-                color: order.type == 'dine_in' ? Colors.indigo.shade700 : Colors.teal.shade700,
+                order.roomId != null
+                    ? Icons.hotel
+                    : (order.type == 'dine_in' ? Icons.table_restaurant : Icons.takeout_dining),
+                color: order.roomId != null
+                    ? Colors.blue.shade700
+                    : (order.type == 'dine_in' ? Colors.indigo.shade700 : Colors.teal.shade700),
                 size: 20,
               ),
             ),
@@ -354,7 +360,9 @@ class _BillingScreenState extends State<BillingScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    order.type == 'dine_in' ? 'Table ${order.tableName ?? "N/A"}' : 'Takeaway Order',
+                    order.roomId != null
+                        ? 'Room ${order.roomName ?? "N/A"}'
+                        : (order.type == 'dine_in' ? 'Table ${order.tableName ?? "N/A"}' : 'Takeaway Order'),
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                   ),
                   const SizedBox(height: 4),
@@ -551,9 +559,11 @@ class _BillingScreenState extends State<BillingScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _selectedOrder!.type == 'dine_in'
-                        ? 'Table ${_selectedOrder!.tableName} Checkout'
-                        : 'Takeaway Checkout',
+                    _selectedOrder!.roomId != null
+                        ? 'Room ${_selectedOrder!.roomName} Checkout'
+                        : (_selectedOrder!.type == 'dine_in'
+                            ? 'Table ${_selectedOrder!.tableName} Checkout'
+                            : 'Takeaway Checkout'),
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                   ),
                   const SizedBox(height: 4),
@@ -689,6 +699,7 @@ class _BillingScreenState extends State<BillingScreen> {
                           setState(() {
                             _checkoutDiscount = discount;
                           });
+                          posProvider.setDiscount(discount);
                         },
                       ),
                     ),
@@ -709,11 +720,13 @@ class _BillingScreenState extends State<BillingScreen> {
           ),
           child: Column(
             children: [
-              _buildCheckoutRow('Subtotal', posProvider.subtotal),
+              _buildCheckoutRow(_selectedOrder!.roomId != null ? 'Food Subtotal' : 'Subtotal', posProvider.subtotal),
               _buildCheckoutRow('Discount', _checkoutDiscount, isNegative: true),
               _buildCheckoutRow('VAT (13%)', (posProvider.subtotal - _checkoutDiscount > 0 ? posProvider.subtotal - _checkoutDiscount : 0.0) * 0.13),
+              if (_selectedOrder!.roomCharge != null && _selectedOrder!.roomCharge! > 0)
+                _buildCheckoutRow('Room Charges', _selectedOrder!.roomCharge!),
               const Divider(),
-              _buildCheckoutRow('Grand Total', (posProvider.subtotal - _checkoutDiscount > 0 ? posProvider.subtotal - _checkoutDiscount : 0.0) * 1.13, isBold: true, size: 20),
+              _buildCheckoutRow('Grand Total', posProvider.grandTotal, isBold: true, size: 20),
               const SizedBox(height: 16),
               Row(
                 children: [

@@ -206,27 +206,69 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
       final svc = subtotal * (svcPct / 100);
       final grandTotal = subtotal + tax + svc;
 
-      await _client.from('orders').insert({
-        'id': orderId,
-        'cafe_id': _cafeId,
-        'room_id': _roomId,
-        'room_booking_id': _bookingId,
-        'type': 'dine_in',
-        'status': 'pending',
-        'subtotal': subtotal,
-        'discount': 0.0,
-        'tax_amount': tax,
-        'service_charge': svc,
-        'grand_total': grandTotal,
-        'payment_method': 'due',
-        'payment_status': 'unpaid',
-        'paid_amount': 0.0,
-        'remaining_due': grandTotal,
-      });
+      // Check if there is an active (uncompleted, uncancelled) order for this room booking / room
+      dynamic activeOrderRes;
+      if (_bookingId != null && _bookingId!.isNotEmpty) {
+        activeOrderRes = await _client
+            .from('orders')
+            .select()
+            .eq('room_booking_id', _bookingId!)
+            .neq('status', 'completed')
+            .neq('status', 'cancelled')
+            .maybeSingle();
+      } else {
+        activeOrderRes = await _client
+            .from('orders')
+            .select()
+            .eq('room_id', _roomId!)
+            .eq('cafe_id', _cafeId!)
+            .neq('status', 'completed')
+            .neq('status', 'cancelled')
+            .maybeSingle();
+      }
+
+      String targetOrderId;
+      if (activeOrderRes != null) {
+        targetOrderId = activeOrderRes['id'];
+        final double currentSubtotal = (activeOrderRes['subtotal'] as num).toDouble();
+        final double currentDiscount = (activeOrderRes['discount'] as num).toDouble();
+        final double newSubtotal = currentSubtotal + subtotal;
+        final double newTax = (newSubtotal - currentDiscount > 0 ? newSubtotal - currentDiscount : 0.0) * (taxPct / 100);
+        final double newSvc = (newSubtotal - currentDiscount > 0 ? newSubtotal - currentDiscount : 0.0) * (svcPct / 100);
+        final double newGrandTotal = newSubtotal - currentDiscount + newTax + newSvc;
+
+        await _client.from('orders').update({
+          'subtotal': newSubtotal,
+          'tax_amount': newTax,
+          'service_charge': newSvc,
+          'grand_total': newGrandTotal,
+          'remaining_due': newGrandTotal,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        }).eq('id', targetOrderId);
+      } else {
+        targetOrderId = orderId;
+        await _client.from('orders').insert({
+          'id': orderId,
+          'cafe_id': _cafeId,
+          'room_id': _roomId,
+          'room_booking_id': _bookingId,
+          'type': 'dine_in',
+          'status': 'pending',
+          'subtotal': subtotal,
+          'discount': 0.0,
+          'tax_amount': tax,
+          'service_charge': svc,
+          'grand_total': grandTotal,
+          'payment_method': 'due',
+          'payment_status': 'unpaid',
+          'paid_amount': 0.0,
+          'remaining_due': grandTotal,
+        });
+      }
 
       final items = _cart.values.map((item) => {
         'id': const Uuid().v4(),
-        'order_id': orderId,
+        'order_id': targetOrderId,
         'product_id': item.id,
         'product_name': item.name,
         'quantity': item.quantity,
@@ -244,7 +286,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
         'message': 'Room $_roomNumber placed an order for Rs. ${grandTotal.toStringAsFixed(0)}',
         'type': 'kot_received',
         'metadata': {
-          'order_id': orderId,
+          'order_id': targetOrderId,
           'table_no': 'Room $_roomNumber',
           'item_count': _cartCount,
         },
@@ -259,7 +301,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
         'message': 'Room $_roomNumber placed an order for Rs. ${grandTotal.toStringAsFixed(0)}',
         'type': 'kot_received',
         'metadata': {
-          'order_id': orderId,
+          'order_id': targetOrderId,
           'table_no': 'Room $_roomNumber',
           'item_count': _cartCount,
         },

@@ -33,6 +33,7 @@ class OrderModel extends Equatable {
   final String? roomId;
   final String? roomBookingId;
   final String? roomName;
+  final double? roomCharge;
 
   const OrderModel({
 
@@ -64,6 +65,7 @@ class OrderModel extends Equatable {
     this.roomId,
     this.roomBookingId,
     this.roomName,
+    this.roomCharge,
   });
 
 
@@ -97,6 +99,7 @@ class OrderModel extends Equatable {
       roomId: json['room_id'] as String?,
       roomBookingId: json['room_booking_id'] as String?,
       roomName: json['room'] != null ? json['room']['room_number'] as String? : null,
+      roomCharge: json['room_booking'] != null ? (json['room_booking']['room_charge'] as num?)?.toDouble() : null,
     );
   }
 
@@ -118,6 +121,7 @@ class OrderModel extends Equatable {
     String? roomId,
     String? roomBookingId,
     String? roomName,
+    double? roomCharge,
   }) {
     return OrderModel(
       id: this.id,
@@ -148,6 +152,7 @@ class OrderModel extends Equatable {
       roomId: roomId ?? this.roomId,
       roomBookingId: roomBookingId ?? this.roomBookingId,
       roomName: roomName ?? this.roomName,
+      roomCharge: roomCharge ?? this.roomCharge,
     );
   }
 
@@ -179,6 +184,7 @@ class OrderModel extends Equatable {
       'customer_due_id': customerDueId,
       'room_id': roomId,
       'room_booking_id': roomBookingId,
+      'room_charge': roomCharge,
     };
   }
 
@@ -213,6 +219,7 @@ class OrderModel extends Equatable {
         roomId,
         roomBookingId,
         roomName,
+        roomCharge,
       ];
 }
 

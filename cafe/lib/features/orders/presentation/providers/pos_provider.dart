@@ -77,7 +77,7 @@ class PosProvider extends ChangeNotifier {
   double get subtotal => _cart.fold(0, (sum, item) => sum + item.totalPrice);
   double get taxableAmount => (subtotal - _discountAmount) > 0 ? (subtotal - _discountAmount) : 0;
   double get taxAmount => taxableAmount * _taxRate;
-  double get grandTotal => taxableAmount + taxAmount;
+  double get grandTotal => taxableAmount + taxAmount + (activeOrder?.roomCharge ?? 0.0);
 
   // Cart Operations
   void addToCart(ProductModel product) {
