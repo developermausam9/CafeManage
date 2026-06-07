@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -48,6 +49,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
   double _foodTotal = 0;
   bool _loadingBill = false;
   bool _checkoutRequested = false;
+  Timer? _pollingTimer;
 
   @override
   void initState() {
@@ -60,8 +62,19 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
     _initializeData();
   }
 
+  void _startPolling() {
+    _pollingTimer?.cancel();
+    _pollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (mounted) {
+        _loadMyOrders(silent: true);
+        _loadBill(silent: true);
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _pollingTimer?.cancel();
     _tabController.dispose();
     _searchCtrl.dispose();
     super.dispose();
@@ -130,6 +143,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
       final prods = await _client.from('products').select().eq('cafe_id', _cafeId!).eq('is_available', true).order('name');
       _products = List<Map<String, dynamic>>.from(prods);
       _filteredProducts = List.from(_products);
+      _startPolling();
     } catch (e) {
       setState(() => _errorMessage = 'Failed to load: $e');
     } finally {
@@ -258,9 +272,9 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
     );
   }
 
-  Future<void> _loadMyOrders() async {
+  Future<void> _loadMyOrders({bool silent = false}) async {
     if (_cafeId == null) return;
-    setState(() => _loadingOrders = true);
+    if (!silent) setState(() => _loadingOrders = true);
     try {
       dynamic query = _client.from('orders').select('id, status, grand_total, created_at, order_items(quantity, price, products(name))');
       if (_bookingId != null && _bookingId!.isNotEmpty) {
@@ -271,13 +285,13 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
       final data = await query.order('created_at', ascending: false).limit(20);
       setState(() => _myOrders = List<Map<String, dynamic>>.from(data));
     } catch (_) {} finally {
-      setState(() => _loadingOrders = false);
+      if (!silent) setState(() => _loadingOrders = false);
     }
   }
 
-  Future<void> _loadBill() async {
+  Future<void> _loadBill({bool silent = false}) async {
     if (_cafeId == null || _roomId == null) return;
-    setState(() => _loadingBill = true);
+    if (!silent) setState(() => _loadingBill = true);
     try {
       dynamic query = _client.from('orders').select('grand_total, status').neq('status', 'cancelled');
       if (_bookingId != null && _bookingId!.isNotEmpty) {
@@ -290,7 +304,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
           0, (s, o) => s + ((o['grand_total'] as num?)?.toDouble() ?? 0));
       setState(() => _foodTotal = total);
     } catch (_) {} finally {
-      setState(() => _loadingBill = false);
+      if (!silent) setState(() => _loadingBill = false);
     }
   }
 

@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 class ConnectivityService extends ChangeNotifier {
   final Connectivity _connectivity = Connectivity();
   late StreamSubscription<List<ConnectivityResult>> _subscription;
-  
+
   bool _isOnline = true;
   bool get isOnline => _isOnline;
 
@@ -14,12 +14,21 @@ class ConnectivityService extends ChangeNotifier {
   }
 
   Future<void> _init() async {
-    // Check initial status
+    // On web, connectivity_plus can't detect wifi/mobile properly.
+    // Always assume online on web and let Supabase requests fail naturally.
+    if (kIsWeb) {
+      _isOnline = true;
+      // Still subscribe but use the web-aware update logic
+      _subscription = _connectivity.onConnectivityChanged.listen(_updateStatus);
+      return;
+    }
+
+    // Mobile/desktop: check initial status
     try {
       final results = await _connectivity.checkConnectivity();
       _updateStatus(results);
     } catch (e) {
-      _isOnline = true; // Default to true if fails
+      _isOnline = true; // Default to true if check fails
     }
 
     // Listen for changes
@@ -27,12 +36,24 @@ class ConnectivityService extends ChangeNotifier {
   }
 
   void _updateStatus(List<ConnectivityResult> results) {
-    bool hasConnection = results.any((result) => 
-      result == ConnectivityResult.mobile || 
-      result == ConnectivityResult.wifi || 
-      result == ConnectivityResult.ethernet
-    );
-    
+    bool hasConnection;
+
+    if (kIsWeb) {
+      // On web: default to true unless results explicitly contains ONLY none.
+      if (results.isEmpty) {
+        hasConnection = true;
+      } else {
+        hasConnection = !results.every((result) => result == ConnectivityResult.none);
+      }
+    } else {
+      // Mobile/desktop: require an explicit known connection type
+      hasConnection = results.any((result) =>
+          result == ConnectivityResult.mobile ||
+          result == ConnectivityResult.wifi ||
+          result == ConnectivityResult.ethernet ||
+          result == ConnectivityResult.other);
+    }
+
     if (_isOnline != hasConnection) {
       _isOnline = hasConnection;
       notifyListeners();

@@ -57,12 +57,14 @@ class AuthProvider extends ChangeNotifier {
     // cached profile, restore the session immediately so the user lands on
     // the dashboard instead of the login screen.
     bool online = true;
-    try {
-      final lookup = await InternetAddress.lookup('google.com')
-          .timeout(const Duration(seconds: 2));
-      online = lookup.isNotEmpty && lookup[0].rawAddress.isNotEmpty;
-    } catch (_) {
-      online = false;
+    if (!kIsWeb) {
+      try {
+        final lookup = await InternetAddress.lookup('google.com')
+            .timeout(const Duration(seconds: 2));
+        online = lookup.isNotEmpty && lookup[0].rawAddress.isNotEmpty;
+      } catch (_) {
+        online = false;
+      }
     }
 
     if (!online) {
@@ -136,12 +138,14 @@ class AuthProvider extends ChangeNotifier {
 
     // ── Offline login fallback detection ──────────────────────────────────────
     bool online = true;
-    try {
-      final lookup = await InternetAddress.lookup('google.com')
-          .timeout(const Duration(seconds: 1));
-      online = lookup.isNotEmpty && lookup[0].rawAddress.isNotEmpty;
-    } catch (_) {
-      online = false;
+    if (!kIsWeb) {
+      try {
+        final lookup = await InternetAddress.lookup('google.com')
+            .timeout(const Duration(seconds: 1));
+        online = lookup.isNotEmpty && lookup[0].rawAddress.isNotEmpty;
+      } catch (_) {
+        online = false;
+      }
     }
 
     if (!online) {

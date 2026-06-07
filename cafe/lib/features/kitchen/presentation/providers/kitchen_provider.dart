@@ -167,12 +167,14 @@ class KitchenProvider extends ChangeNotifier {
 
   Future<void> updateOrderStatus(String orderId, String newStatus) async {
     bool isOnline = true;
-    try {
-      final lookup = await InternetAddress.lookup('google.com')
-          .timeout(const Duration(seconds: 1));
-      isOnline = lookup.isNotEmpty && lookup[0].rawAddress.isNotEmpty;
-    } catch (_) {
-      isOnline = false;
+    if (!kIsWeb) {
+      try {
+        final lookup = await InternetAddress.lookup('google.com')
+            .timeout(const Duration(seconds: 1));
+        isOnline = lookup.isNotEmpty && lookup[0].rawAddress.isNotEmpty;
+      } catch (_) {
+        isOnline = false;
+      }
     }
 
     if (!isOnline) {

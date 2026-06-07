@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/presentation/theme/app_theme.dart';
@@ -18,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _connectivity = Connectivity();
   bool _isOnline = true;
 
   @override
@@ -29,15 +31,24 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _checkConnectivity() async {
-    bool online = true;
-    try {
-      final result = await InternetAddress.lookup('google.com')
-          .timeout(const Duration(seconds: 2));
-      online = result.isNotEmpty && result[0].rawAddress.isNotEmpty;
-    } catch (_) {
-      online = false;
+    // Web: dart:io is unavailable in browsers — always treat as online.
+    // The ConnectivityService (provider) handles real-time status for the rest of the app.
+    if (kIsWeb) {
+      if (mounted) setState(() => _isOnline = true);
+      return;
     }
-    if (mounted) setState(() => _isOnline = online);
+    // Mobile/desktop: brief check using ConnectivityPlus
+    try {
+      final results = await _connectivity.checkConnectivity();
+      final online = results.any((r) =>
+          r == ConnectivityResult.mobile ||
+          r == ConnectivityResult.wifi ||
+          r == ConnectivityResult.ethernet ||
+          r == ConnectivityResult.other);
+      if (mounted) setState(() => _isOnline = online);
+    } catch (_) {
+      if (mounted) setState(() => _isOnline = true);
+    }
   }
 
   @override

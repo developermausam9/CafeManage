@@ -14,6 +14,9 @@ class SyncService {
 
   SyncService({required this.client, required this.connectivityService}) {
     connectivityService.addListener(_onConnectivityChanged);
+    if (connectivityService.isOnline) {
+      Future.microtask(() => syncOfflineOrders());
+    }
   }
 
   void _onConnectivityChanged() {

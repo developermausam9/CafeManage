@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/presentation/theme/app_theme.dart';
 import '../../../../core/services/export_service.dart';
@@ -240,7 +241,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildWebLinksCard(String? cafeId) {
-    const baseUrl = 'https://cafemanage-gamma.vercel.app';
+    final String baseUrl = kIsWeb ? Uri.base.origin : 'https://cafemanage-gamma.vercel.app';
     final bookingUrl = cafeId != null
         ? '$baseUrl/#/book?cafe_id=$cafeId'
         : '$baseUrl/#/book';
