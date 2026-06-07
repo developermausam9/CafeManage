@@ -208,7 +208,8 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
   }
 
   Future<void> _submitBooking() async {
-    if (!_formKey.currentState!.validate()) return;
+    // Already validated in Step 2; check if form state is active and valid
+    if (_formKey.currentState != null && !_formKey.currentState!.validate()) return;
     if (_paymentQrUrl != null && _paymentQrUrl!.isNotEmpty && _txRefCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter the transaction reference after payment.'), backgroundColor: Colors.red),
