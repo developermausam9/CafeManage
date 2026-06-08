@@ -135,6 +135,19 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
           _booking = b;
           _roomCharge = (b?['room_charge'] as num?)?.toDouble() ?? 0;
         } catch (_) {}
+      } else {
+        try {
+          final b = await _client.from('room_bookings')
+              .select('id, guest_name, check_in_date, check_out_date, total_amount, room_charge, status')
+              .eq('room_id', _roomId!)
+              .eq('status', 'checked_in')
+              .maybeSingle();
+          if (b != null) {
+            _bookingId = b['id'];
+            _booking = b;
+            _roomCharge = (b['room_charge'] as num?)?.toDouble() ?? 0;
+          }
+        } catch (_) {}
       }
 
       // Load menu
@@ -252,7 +265,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
           'cafe_id': _cafeId,
           'room_id': _roomId,
           'room_booking_id': _bookingId,
-          'type': 'dine_in',
+          'type': 'room_service',
           'status': 'pending',
           'subtotal': subtotal,
           'discount': 0.0,
@@ -342,7 +355,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
     if (_cafeId == null) return;
     if (!silent) setState(() => _loadingOrders = true);
     try {
-      dynamic query = _client.from('orders').select('id, status, grand_total, created_at, order_items(quantity, unit_price, products(name))');
+      dynamic query = _client.from('orders').select('id, status, grand_total, created_at, order_items(quantity, unit_price, products(name)), order_status_history(status, changed_at)');
       if (_bookingId != null && _bookingId!.isNotEmpty) {
         query = query.eq('room_booking_id', _bookingId!);
       } else {
@@ -697,6 +710,23 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
           if (status != 'cancelled') ...[
             const SizedBox(height: 12),
             _buildStatusProgress(status),
+            const Divider(height: 24),
+            const Row(
+              children: [
+                Icon(Icons.track_changes, size: 16, color: Colors.deepOrange),
+                SizedBox(width: 6),
+                Text(
+                  'Live Order Journey',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildCustomerOrderTimeline(order),
           ],
         ]),
       ),
@@ -954,6 +984,143 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildCustomerOrderTimeline(Map<String, dynamic> order) {
+    final historyList = order['order_status_history'] as List? ?? [];
+    if (historyList.isEmpty) {
+      final currentStatus = order['status'] as String? ?? 'pending';
+      return Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.hourglass_top, size: 12, color: Colors.orange),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            currentStatus.toUpperCase(),
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.orange,
+            ),
+          ),
+        ],
+      );
+    }
+
+    final history = List<Map<String, dynamic>>.from(historyList);
+    history.sort((a, b) => (a['changed_at'] ?? '').toString().compareTo((b['changed_at'] ?? '').toString()));
+
+    return Column(
+      children: history.map((event) {
+        final idx = history.indexOf(event);
+        final isLast = idx == history.length - 1;
+        
+        final changedAtStr = event['changed_at'] as String? ?? '';
+        final localTime = changedAtStr.isNotEmpty
+            ? DateTime.parse(changedAtStr).toLocal()
+            : DateTime.now();
+        final timeStr =
+            '${localTime.hour.toString().padLeft(2, '0')}:${localTime.minute.toString().padLeft(2, '0')}';
+
+        Color themeColor;
+        IconData icon;
+        switch ((event['status'] as String? ?? '').toLowerCase()) {
+          case 'pending':
+          case 'kitchen_sent':
+            themeColor = Colors.orange;
+            icon = Icons.hourglass_top_rounded;
+            break;
+          case 'preparing':
+            themeColor = Colors.blue;
+            icon = Icons.cookie_rounded;
+            break;
+          case 'ready':
+            themeColor = Colors.cyan;
+            icon = Icons.check_circle_outline_rounded;
+            break;
+          case 'served':
+            themeColor = Colors.teal;
+            icon = Icons.room_service_rounded;
+            break;
+          case 'billed':
+            themeColor = Colors.purple;
+            icon = Icons.receipt_long_rounded;
+            break;
+          case 'completed':
+            themeColor = Colors.green;
+            icon = Icons.payment_rounded;
+            break;
+          case 'cancelled':
+            themeColor = Colors.red;
+            icon = Icons.cancel_rounded;
+            break;
+          default:
+            themeColor = Colors.grey;
+            icon = Icons.circle;
+        }
+
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      color: themeColor.withOpacity(0.08),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, size: 12, color: themeColor),
+                  ),
+                  if (!isLast)
+                    Expanded(
+                      child: Container(
+                        width: 1.5,
+                        margin: const EdgeInsets.symmetric(vertical: 2),
+                        color: Colors.grey.shade200,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 10.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        (event['status'] as String? ?? '').toUpperCase(),
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                          color: themeColor,
+                        ),
+                      ),
+                      Text(
+                        timeStr,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 }

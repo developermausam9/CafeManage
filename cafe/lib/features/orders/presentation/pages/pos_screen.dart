@@ -9,7 +9,9 @@ import '../../../menu/presentation/providers/product_provider.dart';
 import '../../../menu/data/models/product_model.dart';
 import '../providers/pos_provider.dart';
 import '../providers/table_provider.dart';
+import '../providers/room_provider.dart';
 import '../../data/models/table_model.dart';
+import '../../data/models/room_model.dart';
 import '../../data/models/order_status_history_model.dart';
 import '../models/cart_item.dart';
 import '../widgets/checkout_dialog.dart';
@@ -40,6 +42,7 @@ class _PosScreenState extends State<PosScreen> {
       if (cafeId != null) {
         context.read<ProductProvider>().loadProducts(cafeId);
         context.read<TableProvider>().init(cafeId);
+        context.read<RoomProvider>().init(cafeId);
         context.read<PosProvider>().fetchSettings(cafeId);
         _loadCategories();
       }
@@ -197,6 +200,7 @@ class _PosScreenState extends State<PosScreen> {
 
   Widget _buildPOSViewToggle(PosProvider posProvider, bool isDesktop) {
     final showTables = posProvider.orderType == 'Dine-in';
+    final showRooms = posProvider.orderType == 'Room Service';
     
     return Container(
       color: AppTheme.surfaceColor,
@@ -219,6 +223,16 @@ class _PosScreenState extends State<PosScreen> {
                       },
                     ),
                   if (showTables) const SizedBox(width: 8),
+                  if (showRooms)
+                    _buildToggleButton(
+                      label: 'Rooms',
+                      icon: Icons.hotel,
+                      isSelected: _currentView == 'Rooms',
+                      onPressed: () {
+                        setState(() => _currentView = 'Rooms');
+                      },
+                    ),
+                  if (showRooms) const SizedBox(width: 8),
                   _buildToggleButton(
                     label: 'Products',
                     icon: Icons.fastfood,
@@ -335,6 +349,13 @@ class _PosScreenState extends State<PosScreen> {
                           children: [
                             _buildTableGridHeader(),
                             Expanded(child: _buildTableGrid()),
+                          ],
+                        );
+                      } else if (_currentView == 'Rooms' && posProvider.orderType == 'Room Service') {
+                        return Column(
+                          children: [
+                            _buildRoomGridHeader(),
+                            Expanded(child: _buildRoomGrid()),
                           ],
                         );
                       } else if (_currentView == 'Current Order') {
@@ -997,15 +1018,78 @@ class _PosScreenState extends State<PosScreen> {
                   value: posProvider.orderType,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Type', isDense: true),
-                  items: ['Dine-in', 'Takeaway', 'Delivery'].map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                  items: ['Dine-in', 'Room Service', 'Takeaway', 'Delivery'].map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
                   onChanged: (val) {
                     posProvider.setOrderType(val!);
                     setState(() {
-                      _currentView = val == 'Dine-in' ? 'Tables' : 'Products';
+                      _currentView = val == 'Dine-in' ? 'Tables' : (val == 'Room Service' ? 'Rooms' : 'Products');
                     });
                   },
                 ),
               ),
+              if (posProvider.orderType == 'Room Service') ...[
+                if (posProvider.activeRoomId == null) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Consumer<RoomProvider>(
+                      builder: (context, roomProvider, child) {
+                        final rooms = roomProvider.rooms;
+                        return DropdownButtonFormField<String>(
+                          value: rooms.any((r) => r.id == posProvider.activeRoomId) ? posProvider.activeRoomId : (rooms.isNotEmpty ? rooms.first.id : null),
+                          isExpanded: true,
+                          decoration: const InputDecoration(labelText: 'Room', isDense: true),
+                          items: rooms.map((r) => DropdownMenuItem(value: r.id, child: Text('Room ${r.roomNumber}'))).toList(),
+                          onChanged: (val) {
+                            final selected = rooms.firstWhere((r) => r.id == val);
+                            final cafeId = context.read<AuthProvider>().cafeId;
+                            final role = context.read<AuthProvider>().currentProfile?.role;
+                            if (cafeId != null) {
+                              posProvider.selectRoom(selected, cafeId, userRole: role);
+                              setState(() {
+                                _currentView = 'Products';
+                              });
+                            }
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ] else ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryColor.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppTheme.primaryColor.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.hotel, size: 16, color: AppTheme.primaryColor),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              posProvider.selectedTable,
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryColor, fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          InkWell(
+                            onTap: () {
+                              posProvider.setOrderType('Room Service');
+                              setState(() {
+                                _currentView = 'Rooms';
+                              });
+                            },
+                            child: const Icon(Icons.close, size: 16, color: AppTheme.primaryColor),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ],
               if (posProvider.orderType == 'Dine-in') ...[
                 if (posProvider.activeTableId == null) ...[
                   const SizedBox(width: 8),
@@ -1337,6 +1421,173 @@ class _PosScreenState extends State<PosScreen> {
             child: const Text('View Cart'),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildRoomGridHeader() {
+    return Container(
+      color: AppTheme.surfaceColor,
+      width: double.infinity,
+      padding: const EdgeInsets.all(20.0),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Select a Room to Order',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
+          ),
+          SizedBox(height: 4),
+          Text(
+            'Manage customer room service sessions, active orders, and billing.',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRoomGrid() {
+    return Consumer<RoomProvider>(
+      builder: (context, roomProvider, child) {
+        if (roomProvider.isLoading && roomProvider.rooms.isEmpty) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final activeRooms = roomProvider.rooms;
+
+        if (activeRooms.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.hotel, size: 64, color: Colors.grey.shade400),
+                const SizedBox(height: 16),
+                const Text('No rooms configured.', style: TextStyle(fontSize: 18, color: AppTheme.textSecondary)),
+                const SizedBox(height: 8),
+                const Text('Admins can configure rooms in the Rooms tab.', style: TextStyle(color: Colors.grey)),
+              ],
+            ),
+          );
+        }
+
+        final double screenWidth = MediaQuery.of(context).size.width;
+        int crossAxisCount = 2;
+        double aspectRatio = 1.25;
+        
+        if (screenWidth > 1200) {
+          crossAxisCount = 5;
+        } else if (screenWidth > 800) {
+          crossAxisCount = 4;
+        } else if (screenWidth > 500) {
+          crossAxisCount = 3;
+        }
+
+        return GridView.builder(
+          padding: const EdgeInsets.all(20),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            childAspectRatio: aspectRatio,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+          ),
+          itemCount: activeRooms.length,
+          itemBuilder: (context, index) {
+            final room = activeRooms[index];
+            return _buildRoomCard(room);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildRoomCard(RoomModel room) {
+    Color cardColor;
+    Color textColor;
+    IconData icon;
+
+    switch (room.status) {
+      case 'occupied':
+        cardColor = Colors.orange.shade50;
+        textColor = Colors.orange.shade800;
+        icon = Icons.hotel;
+        break;
+      case 'dirty':
+        cardColor = Colors.red.shade50;
+        textColor = Colors.red.shade800;
+        icon = Icons.cleaning_services;
+        break;
+      case 'maintenance':
+        cardColor = Colors.grey.shade100;
+        textColor = Colors.grey.shade800;
+        icon = Icons.build;
+        break;
+      default: // available
+        cardColor = Colors.green.shade50;
+        textColor = Colors.green.shade800;
+        icon = Icons.hotel_outlined;
+    }
+
+    return InkWell(
+      onTap: () {
+        final cafeId = context.read<AuthProvider>().cafeId;
+        final role = context.read<AuthProvider>().currentProfile?.role;
+        if (cafeId != null) {
+          context.read<PosProvider>().selectRoom(room, cafeId, userRole: role);
+          setState(() {
+            _currentView = 'Products';
+          });
+        }
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: textColor.withOpacity(0.2), width: 1.5),
+          boxShadow: [
+            BoxShadow(color: textColor.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2)),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Icon(icon, color: textColor, size: 28),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: textColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      room.status.toUpperCase(),
+                      style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 10),
+                    ),
+                  ),
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Room ${room.roomNumber}',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: textColor.withOpacity(0.9)),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    room.type.toUpperCase(),
+                    style: TextStyle(color: textColor.withOpacity(0.7), fontSize: 12),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

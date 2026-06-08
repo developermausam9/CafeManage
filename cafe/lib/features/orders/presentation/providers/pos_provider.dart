@@ -12,6 +12,7 @@ import '../../data/models/table_model.dart';
 import '../../data/models/order_status_history_model.dart';
 import '../../../../core/services/sync_service.dart';
 import '../../../../core/services/connectivity_service.dart';
+import '../../data/models/room_model.dart';
 import '../../domain/usecases/create_order_usecase.dart';
 import '../models/cart_item.dart';
 import '../../../../core/services/notification_service.dart';
@@ -54,6 +55,8 @@ class PosProvider extends ChangeNotifier {
 
   // New Table Operations State
   String? activeTableId;
+  String? activeRoomId;
+  String? activeRoomBookingId;
   OrderModel? activeOrder;
 
   // Waiter Billing Permission State
@@ -126,6 +129,12 @@ class PosProvider extends ChangeNotifier {
     _orderType = type;
     if (type != 'Dine-in') {
       activeTableId = null;
+    }
+    if (type != 'Room Service') {
+      activeRoomId = null;
+      activeRoomBookingId = null;
+    }
+    if (type != 'Dine-in' && type != 'Room Service') {
       activeOrder = null;
     }
     notifyListeners();
@@ -350,6 +359,124 @@ class PosProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Room Selection & Order Restoration
+  Future<void> selectRoom(RoomModel room, String cafeId, {String? userRole}) async {
+    activeRoomId = room.id;
+    _selectedTable = 'Room ${room.roomNumber}';
+    _orderType = 'Room Service';
+    activeTableId = null;
+
+    _setState(PosState.loading);
+    try {
+      final bookingResponse = await _client
+          .from('room_bookings')
+          .select('id, guest_name, room_charge, status')
+          .eq('room_id', room.id)
+          .eq('status', 'checked_in')
+          .maybeSingle();
+
+      if (bookingResponse != null) {
+        activeRoomBookingId = bookingResponse['id'];
+
+        final orderResponse = await _client
+            .from('orders')
+            .select('*, waiter:profiles!waiter_id(full_name), room_booking:room_bookings!room_booking_id(room_charge)')
+            .eq('room_booking_id', activeRoomBookingId!)
+            .neq('status', 'completed')
+            .neq('status', 'cancelled')
+            .maybeSingle();
+
+        if (orderResponse != null) {
+          activeOrder = OrderModel.fromJson(orderResponse);
+          _discountAmount = activeOrder!.discount;
+          _paymentMethod = _restorePaymentMethod(activeOrder!.paymentMethod);
+
+          // If the user opening the room is a Cashier, Admin, or Owner, transition to 'billed'
+          if ((userRole == 'cashier' || userRole == 'admin' || userRole == 'owner') &&
+              activeOrder!.status != 'billed' &&
+              activeOrder!.status != 'completed' &&
+              activeOrder!.status != 'cancelled') {
+            try {
+              await _client
+                  .from('orders')
+                  .update({'status': 'billed'})
+                  .eq('id', activeOrder!.id);
+              activeOrder = activeOrder!.copyWith(status: 'billed');
+            } catch (e) {
+              debugPrint("Error updating order to billed: $e");
+            }
+          }
+
+          // Fetch items for this active order
+          final itemsRes = await _client
+              .from('order_items')
+              .select()
+              .eq('order_id', activeOrder!.id);
+
+          final List<OrderItemModel> items = (itemsRes as List)
+              .map((json) => OrderItemModel.fromJson(json))
+              .toList();
+
+          _cart.clear();
+          for (var item in items) {
+            final productRes = await _client
+                .from('products')
+                .select()
+                .eq('id', item.productId ?? '')
+                .maybeSingle();
+
+            ProductModel product;
+            if (productRes != null) {
+              product = ProductModel.fromJson(productRes);
+            } else {
+              product = ProductModel(
+                id: item.productId ?? '',
+                cafeId: cafeId,
+                name: item.productName,
+                sellingPrice: item.unitPrice,
+                costPrice: item.unitPrice,
+                stockQuantity: 9999,
+                isAvailable: true,
+                isStockTracked: false,
+                categoryId: 'Food',
+              );
+            }
+
+            final cartItem = CartItem(product: product)
+              ..quantity = item.quantity.toDouble()
+              ..note = item.notes ?? '';
+            _cart.add(cartItem);
+          }
+
+          // Subscribe to active order changes and fetch timeline
+          _subscribeToActiveOrder(activeOrder!.id);
+          await fetchOrderStatusHistory(activeOrder!.id);
+
+          _setState(PosState.success);
+        } else {
+          _orderSubscription?.cancel();
+          _historySubscription?.cancel();
+          _orderStatusHistory.clear();
+          activeOrder = null;
+          clearCart();
+          _setState(PosState.success);
+        }
+      } else {
+        activeRoomBookingId = null;
+        _orderSubscription?.cancel();
+        _historySubscription?.cancel();
+        _orderStatusHistory.clear();
+        activeOrder = null;
+        clearCart();
+        _setState(PosState.success);
+      }
+    } catch (e) {
+      _errorMessage = e.toString();
+      _setState(PosState.error);
+    }
+    notifyListeners();
+  }
+
   // Send Order to Kitchen (KOT) without payment
   Future<bool> sendToKitchen(String cafeId, String waiterId) async {
     if (_cart.isEmpty) {
@@ -370,12 +497,15 @@ class PosProvider extends ChangeNotifier {
           id: orderId,
           cafeId: cafeId,
           customerId: null,
-          tableId: activeTableId,
+          tableId: _orderType == 'Room Service' ? null : activeTableId,
+          roomId: _orderType == 'Room Service' ? activeRoomId : null,
+          roomBookingId: _orderType == 'Room Service' ? activeRoomBookingId : null,
           waiterId: activeOrder?.waiterId ?? waiterId,
           cashierId: null,
           status: 'kitchen_sent',
-          paymentMethod: null,
-          type: 'dine_in',
+          paymentMethod: _orderType == 'Room Service' ? 'due' : null,
+          paymentStatus: _orderType == 'Room Service' ? 'unpaid' : 'paid',
+          type: _mapOrderType(_orderType),
           subtotal: subtotal,
           discount: _discountAmount,
           taxAmount: taxAmount,
@@ -441,12 +571,15 @@ class PosProvider extends ChangeNotifier {
         id: orderId,
         cafeId: cafeId,
         customerId: null,
-        tableId: activeTableId,
+        tableId: _orderType == 'Room Service' ? null : activeTableId,
+        roomId: _orderType == 'Room Service' ? activeRoomId : null,
+        roomBookingId: _orderType == 'Room Service' ? activeRoomBookingId : null,
         waiterId: activeOrder?.waiterId ?? waiterId,
         cashierId: null,
         status: 'kitchen_sent',
-        paymentMethod: null,
-        type: 'dine_in',
+        paymentMethod: _orderType == 'Room Service' ? 'due' : null,
+        paymentStatus: _orderType == 'Room Service' ? 'unpaid' : 'paid',
+        type: _mapOrderType(_orderType),
         subtotal: subtotal,
         discount: _discountAmount,
         taxAmount: taxAmount,
@@ -505,7 +638,9 @@ class PosProvider extends ChangeNotifier {
           'cafe_id': cafeId,
           'recipient_role': 'kitchen',
           'title': 'New KOT Received',
-          'message': 'New order sent to kitchen for Table $_selectedTable.',
+          'message': _orderType == 'Room Service'
+              ? 'New order sent to kitchen for $_selectedTable.'
+              : 'New order sent to kitchen for Table $_selectedTable.',
           'type': 'kot_sent',
           'metadata': {'order_id': orderId},
         });
@@ -686,7 +821,9 @@ class PosProvider extends ChangeNotifier {
             'cafe_id': cafeId,
             'recipient_role': 'kitchen',
             'title': 'Items Added to Order',
-            'message': 'Table $_selectedTable added: ${addedItemNames.join(", ")}.',
+            'message': _orderType == 'Room Service'
+                ? '$_selectedTable added: ${addedItemNames.join(", ")}.'
+                : 'Table $_selectedTable added: ${addedItemNames.join(", ")}.',
             'type': 'item_added',
             'metadata': {'order_id': orderId},
           });
@@ -695,8 +832,10 @@ class PosProvider extends ChangeNotifier {
           await _client.from('notifications').insert({
             'cafe_id': cafeId,
             'recipient_role': 'kitchen',
-            'title': 'Items Cancelled',
-            'message': 'Table $_selectedTable cancelled: ${cancelledItemNames.join(", ")}.',
+            'title': 'KOT Items Cancelled',
+            'message': _orderType == 'Room Service'
+                ? '$_selectedTable cancelled: ${cancelledItemNames.join(", ")}.'
+                : 'Table $_selectedTable cancelled: ${cancelledItemNames.join(", ")}.',
             'type': 'item_cancelled',
             'metadata': {'order_id': orderId},
           });
@@ -841,7 +980,9 @@ class PosProvider extends ChangeNotifier {
           id: orderId,
           cafeId: cafeId,
           customerId: null,
-          tableId: activeTableId,
+          tableId: _orderType == 'Room Service' ? null : activeTableId,
+          roomId: _orderType == 'Room Service' ? activeRoomId : null,
+          roomBookingId: _orderType == 'Room Service' ? activeRoomBookingId : null,
           waiterId: activeOrder?.waiterId ?? cashierId,
           cashierId: cashierId,
           status: 'completed',
@@ -970,7 +1111,9 @@ class PosProvider extends ChangeNotifier {
         id: orderId,
         cafeId: cafeId,
         customerId: null,
-        tableId: activeTableId,
+        tableId: _orderType == 'Room Service' ? null : activeTableId,
+        roomId: _orderType == 'Room Service' ? activeRoomId : null,
+        roomBookingId: _orderType == 'Room Service' ? activeRoomBookingId : null,
         waiterId: activeOrder?.waiterId ?? cashierId,
         cashierId: cashierId,
         status: 'completed',
@@ -1357,6 +1500,10 @@ class PosProvider extends ChangeNotifier {
       case 'dine-in':
       case 'dine_in':
         return 'dine_in';
+      case 'room service':
+      case 'room_service':
+      case 'roomservice':
+        return 'room_service';
       case 'takeaway':
         return 'takeaway';
       case 'delivery':
@@ -1389,6 +1536,10 @@ class PosProvider extends ChangeNotifier {
       case 'dine_in':
       case 'dine-in':
         return 'Dine-in';
+      case 'room_service':
+      case 'room service':
+      case 'roomservice':
+        return 'Room Service';
       case 'takeaway':
         return 'Takeaway';
       case 'delivery':
@@ -1422,6 +1573,8 @@ class PosProvider extends ChangeNotifier {
         final orderJson = offlineOrderData['order'];
         activeOrder = OrderModel.fromJson(orderJson);
         activeTableId = activeOrder!.tableId;
+        activeRoomId = activeOrder!.roomId;
+        activeRoomBookingId = activeOrder!.roomBookingId;
         _discountAmount = activeOrder!.discount;
         _paymentMethod = _restorePaymentMethod(activeOrder!.paymentMethod);
         _orderType = _restoreOrderType(activeOrder!.type);
@@ -1471,12 +1624,14 @@ class PosProvider extends ChangeNotifier {
 
       final orderResponse = await _client
           .from('orders')
-          .select('*, waiter:profiles!waiter_id(full_name), table:tables!table_id(name)')
+          .select('*, waiter:profiles!waiter_id(full_name), table:tables!table_id(name), room:rooms!room_id(room_number), room_booking:room_bookings!room_booking_id(room_charge)')
           .eq('id', orderId)
           .single();
 
       activeOrder = OrderModel.fromJson(orderResponse);
       activeTableId = activeOrder!.tableId;
+      activeRoomId = activeOrder!.roomId;
+      activeRoomBookingId = activeOrder!.roomBookingId;
       _discountAmount = activeOrder!.discount;
       _paymentMethod = _restorePaymentMethod(activeOrder!.paymentMethod);
       _orderType = _restoreOrderType(activeOrder!.type);
