@@ -158,7 +158,7 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
       if (_isValidUuid(bookingIdStr)) {
         final res = await _client.from('room_bookings')
             .select('*, rooms(room_number, type, price_per_night, floor_number)')
-            .eq('id', bookingIdStr)
+            .eq('id', bookingIdStr!)
             .maybeSingle();
         if (res != null) {
           _completedBooking = Map<String, dynamic>.from(res);

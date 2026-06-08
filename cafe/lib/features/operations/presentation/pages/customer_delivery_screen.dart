@@ -182,7 +182,7 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
       if (_isValidUuid(deliveryIdStr)) {
         final delRes = await _client.from('deliveries')
             .select('*')
-            .eq('id', deliveryIdStr)
+            .eq('id', deliveryIdStr!)
             .maybeSingle();
         if (delRes != null) {
           _submittedDelivery = Map<String, dynamic>.from(delRes);
