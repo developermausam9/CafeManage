@@ -311,7 +311,7 @@ class _BillingScreenState extends State<BillingScreen> {
                 status: 'completed',
                 paymentMethod: _checkoutPaymentMethod.toLowerCase(),
                 discount: _checkoutDiscount,
-                grandTotal: (subtotal - _checkoutDiscount) * 1.13, // re-estimate matching POS
+                grandTotal: posProvider.grandTotal, // Use the actual provider grandTotal (including room charges)
               ),
               items: itemsCopy,
             ),
@@ -794,13 +794,14 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   Future<void> _viewReceipt(OrderModel order) async {
+    final posProvider = context.read<PosProvider>();
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => ReceiptScreen(
           order: order.copyWith(
             discount: _checkoutDiscount,
-            grandTotal: (context.read<PosProvider>().subtotal - _checkoutDiscount > 0 ? context.read<PosProvider>().subtotal - _checkoutDiscount : 0.0) * 1.13,
+            grandTotal: posProvider.grandTotal, // Use the actual provider grandTotal (including room charges)
           ),
           items: _selectedOrderItems,
         ),
