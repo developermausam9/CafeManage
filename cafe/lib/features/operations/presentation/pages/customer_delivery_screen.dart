@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
@@ -53,6 +54,10 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
   Timer? _trackingTimer;
   bool _isSubmitting = false;
 
+  // Track Existing Delivery Order
+  final _trackDeliveryIdCtrl = TextEditingController();
+  bool _isTrackingLookup = false;
+
   @override
   void initState() {
     super.initState();
@@ -69,6 +74,7 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
     _phoneCtrl.dispose();
     _addressCtrl.dispose();
     _notesCtrl.dispose();
+    _trackDeliveryIdCtrl.dispose();
     super.dispose();
   }
 
@@ -169,6 +175,20 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
       if (_categories.isNotEmpty) {
         _selectedCategoryId = _categories.first['id'];
         _filterProducts();
+      }
+
+      // Check if direct delivery tracking is requested via URL
+      final deliveryIdStr = params['delivery_id'];
+      if (_isValidUuid(deliveryIdStr)) {
+        final delRes = await _client.from('deliveries')
+            .select('*')
+            .eq('id', deliveryIdStr)
+            .maybeSingle();
+        if (delRes != null) {
+          _submittedDelivery = Map<String, dynamic>.from(delRes);
+          _step = 3; // Live tracking step
+          _startTracking();
+        }
       }
 
       setState(() => _isLoading = false);
@@ -334,6 +354,97 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
     });
   }
 
+  void _showTrackOrderDialog() {
+    _trackDeliveryIdCtrl.clear();
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(Icons.track_changes, color: AppTheme.primaryColor),
+                  SizedBox(width: 8),
+                  Text('Track Existing Order'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Enter your Delivery ID (UUID) to track your order progress in real-time.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _trackDeliveryIdCtrl,
+                    decoration: InputDecoration(
+                      hintText: 'e.g. 123e4567-e89b-12d3-a456-426614174000',
+                      hintStyle: const TextStyle(fontSize: 12, color: Colors.grey),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: _isTrackingLookup ? null : () async {
+                    final rawId = _trackDeliveryIdCtrl.text.trim();
+                    if (!_isValidUuid(rawId)) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Please enter a valid Delivery ID (UUID).'), backgroundColor: Colors.red),
+                      );
+                      return;
+                    }
+                    setDialogState(() => _isTrackingLookup = true);
+                    try {
+                      final res = await _client.from('deliveries')
+                          .select('*')
+                          .eq('id', rawId)
+                          .maybeSingle();
+                      if (res == null) {
+                        throw Exception('Order/Delivery not found. Please check your Delivery ID.');
+                      }
+                      Navigator.pop(context); // Close dialog
+                      setState(() {
+                        _submittedDelivery = Map<String, dynamic>.from(res);
+                        _step = 3; // Live Tracking
+                      });
+                      _startTracking();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Order found! Loading status...'), backgroundColor: Colors.green),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'), backgroundColor: Colors.red),
+                      );
+                    } finally {
+                      setDialogState(() => _isTrackingLookup = false);
+                    }
+                  },
+                  child: _isTrackingLookup
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Text('Track'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   // ── UI WIDGETS ────────────────────────────────────────────────────────────
 
   @override
@@ -441,6 +552,14 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
                 },
               )
             : null,
+        actions: [
+          if (_step == 0)
+            IconButton(
+              icon: const Icon(Icons.track_changes, color: AppTheme.primaryColor),
+              tooltip: 'Track Existing Order',
+              onPressed: _showTrackOrderDialog,
+            ),
+        ],
       ),
       body: _buildCurrentStepView(),
       bottomNavigationBar: _step < 3 ? _buildBottomActionBar() : null,
@@ -869,6 +988,26 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
 
   // ── STEP 4: REAL-TIME TRACKING ────────────────────────────────────────────
 
+  Widget _detailRow(String label, String value, {Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: color ?? AppTheme.textPrimary,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLiveTracking() {
     if (_submittedDelivery == null) {
       return const Center(child: Text('Loading tracking...'));
@@ -958,6 +1097,31 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
             const SizedBox(height: 24),
           ],
 
+          // Payment Details Card
+          const Text('Payment Details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+            child: Column(
+              children: [
+                _detailRow('Method', (_submittedDelivery!['payment_method'] as String? ?? 'cash').toUpperCase()),
+                const Divider(),
+                _detailRow(
+                  'Payment Status',
+                  _submittedDelivery!['payment_status'] == 'paid'
+                      ? 'PAID & VERIFIED'
+                      : (_submittedDelivery!['payment_method'] == 'qr' ? 'PENDING VERIFICATION' : 'PENDING ON ARRIVAL'),
+                  color: _submittedDelivery!['payment_status'] == 'paid'
+                      ? Colors.green
+                      : (_submittedDelivery!['payment_method'] == 'qr' ? Colors.orange : Colors.blue),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
           // Address Summary card
           const Text('Delivery Address', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
@@ -985,6 +1149,24 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
           ),
           const SizedBox(height: 40),
 
+          // Copy tracking link button
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 50),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: () {
+              final trackingUrl = "${Uri.base.origin}${Uri.base.path}?delivery_id=${_submittedDelivery!['id']}&cafe_id=$_cafeId";
+              Clipboard.setData(ClipboardData(text: trackingUrl));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Tracking Link copied! Bookmark it to check status later.')),
+              );
+            },
+            icon: const Icon(Icons.link),
+            label: const Text('Copy Direct Tracking Link'),
+          ),
+          const SizedBox(height: 12),
+
           // Return home button
           OutlinedButton(
             style: OutlinedButton.styleFrom(
@@ -996,6 +1178,7 @@ class _CustomerDeliveryScreenState extends State<CustomerDeliveryScreen>
                 _step = 0;
                 _submittedDelivery = null;
                 _trackingTimer?.cancel();
+                _trackDeliveryIdCtrl.clear();
               });
             },
             child: const Text('Order Something Else'),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -51,6 +52,11 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
   bool _isSubmitting = false;
   Map<String, dynamic>? _completedBooking;
 
+  // Real-time tracking and lookup
+  Timer? _trackingTimer;
+  final _trackBookingIdCtrl = TextEditingController();
+  bool _isTrackingLookup = false;
+
   @override
   void initState() {
     super.initState();
@@ -59,6 +65,8 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
 
   @override
   void dispose() {
+    _trackingTimer?.cancel();
+    _trackBookingIdCtrl.dispose();
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
@@ -144,6 +152,20 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
           .maybeSingle();
       if (settings != null) _paymentQrUrl = settings['payment_qr_url'];
       await _loadRooms();
+
+      // Check if direct booking tracking is requested via URL
+      final bookingIdStr = params['booking_id'];
+      if (_isValidUuid(bookingIdStr)) {
+        final res = await _client.from('room_bookings')
+            .select('*, rooms(room_number, type, price_per_night, floor_number)')
+            .eq('id', bookingIdStr)
+            .maybeSingle();
+        if (res != null) {
+          _completedBooking = Map<String, dynamic>.from(res);
+          _step = 99;
+          _startTracking();
+        }
+      }
     } catch (e) {
       setState(() => _errorMessage = 'Failed to load: $e');
     } finally {
@@ -207,6 +229,63 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
     }
   }
 
+  void _startTracking() {
+    _trackingTimer?.cancel();
+    _trackingTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (_completedBooking == null) return;
+      try {
+        final res = await _client.from('room_bookings')
+            .select('*, rooms(room_number, type, price_per_night, floor_number)')
+            .eq('id', _completedBooking!['id'])
+            .maybeSingle();
+        if (res != null && mounted) {
+          setState(() {
+            _completedBooking = Map<String, dynamic>.from(res);
+          });
+          if (res['status'] == 'cancelled' || res['status'] == 'checked_out') {
+            _trackingTimer?.cancel();
+          }
+        }
+      } catch (e) {
+        debugPrint('Error polling booking status: $e');
+      }
+    });
+  }
+
+  Future<void> _lookupAndTrackBooking() async {
+    final rawId = _trackBookingIdCtrl.text.trim();
+    if (!_isValidUuid(rawId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid Booking ID (UUID).'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    setState(() => _isTrackingLookup = true);
+    try {
+      final res = await _client.from('room_bookings')
+          .select('*, rooms(room_number, type, price_per_night, floor_number)')
+          .eq('id', rawId)
+          .maybeSingle();
+      if (res == null) {
+        throw Exception('Booking not found. Please check your Booking ID.');
+      }
+      setState(() {
+        _completedBooking = Map<String, dynamic>.from(res);
+        _step = 99; // success / pass screen
+      });
+      _startTracking();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Booking found! Loading status...'), backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'), backgroundColor: Colors.red),
+      );
+    } finally {
+      setState(() => _isTrackingLookup = false);
+    }
+  }
+
   Future<void> _submitBooking() async {
     // Already validated in Step 2; check if form state is active and valid
     if (_formKey.currentState != null && !_formKey.currentState!.validate()) return;
@@ -236,6 +315,7 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
         _completedBooking = Map<String, dynamic>.from(res);
         _step = 99; // success
       });
+      _startTracking();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Booking failed: $e'), backgroundColor: Colors.red),
@@ -514,7 +594,82 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
           const Icon(Icons.arrow_forward),
         ]),
       ),
+      const SizedBox(height: 32),
+      const Divider(),
+      const SizedBox(height: 24),
+      _buildTrackBookingCard(),
     ]);
+  }
+
+  Widget _buildTrackBookingCard() {
+    return Card(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.track_changes, color: AppTheme.primaryColor),
+                SizedBox(width: 8),
+                Text(
+                  'Track Existing Booking',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Enter your Booking ID (UUID) to check the real-time status of your reservation and payment.',
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _trackBookingIdCtrl,
+                    decoration: InputDecoration(
+                      hintText: 'e.g. 123e4567-e89b-12d3-a456-426614174000',
+                      hintStyle: const TextStyle(fontSize: 12, color: Colors.grey),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: Colors.grey.shade200),
+                      ),
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  ),
+                  onPressed: _isTrackingLookup ? null : _lookupAndTrackBooking,
+                  child: _isTrackingLookup
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Text('Track', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _dateCard(String label, DateTime date, IconData icon) {
@@ -963,23 +1118,85 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
     final bookingId = b['id'] as String;
     final shortId = bookingId.substring(0, 8).toUpperCase();
 
+    final status = b['status'] as String? ?? 'pending';
+    final paymentStatus = b['payment_status'] as String? ?? 'unpaid';
+
+    String statusText = 'Pending';
+    Color statusColor = Colors.orange;
+    IconData statusIcon = Icons.hourglass_empty;
+
+    Gradient bannerGradient = const LinearGradient(colors: [Colors.orange, Color(0xFFE65100)]);
+    String bannerTitle = 'Booking Submitted!';
+    String bannerSubtitle = 'Your request is pending confirmation from the hotel staff.';
+
+    if (status == 'pending') {
+      statusText = 'Pending Confirmation';
+      statusColor = Colors.orange;
+      statusIcon = Icons.hourglass_empty;
+      bannerGradient = const LinearGradient(colors: [Colors.orange, Color(0xFFE65100)]);
+      bannerTitle = 'Booking Submitted!';
+      bannerSubtitle = 'Your request is pending confirmation from the hotel staff.';
+    } else if (status == 'confirmed') {
+      statusText = 'Confirmed';
+      statusColor = Colors.green;
+      statusIcon = Icons.check_circle;
+      bannerGradient = const LinearGradient(colors: [Colors.green, Color(0xFF2E7D32)]);
+      bannerTitle = 'Booking Confirmed!';
+      bannerSubtitle = 'Your reservation is confirmed! Check-in: ${b['check_in_date']}.';
+    } else if (status == 'checked_in') {
+      statusText = 'Checked In';
+      statusColor = Colors.blue;
+      statusIcon = Icons.vpn_key;
+      bannerGradient = const LinearGradient(colors: [Colors.blue, Color(0xFF0D47A1)]);
+      bannerTitle = 'Welcome to Room ${room['room_number']}!';
+      bannerSubtitle = 'You are currently checked in. Enjoy your stay!';
+    } else if (status == 'checked_out') {
+      statusText = 'Checked Out';
+      statusColor = Colors.grey;
+      statusIcon = Icons.done_all;
+      bannerGradient = const LinearGradient(colors: [Colors.grey, Color(0xFF424242)]);
+      bannerTitle = 'Checked Out';
+      bannerSubtitle = 'Thank you for staying with us! Safe travels.';
+    } else if (status == 'cancelled') {
+      statusText = 'Cancelled';
+      statusColor = Colors.red;
+      statusIcon = Icons.cancel;
+      bannerGradient = const LinearGradient(colors: [Colors.red, Color(0xFFB71C1C)]);
+      bannerTitle = 'Booking Cancelled';
+      bannerSubtitle = 'This reservation has been cancelled.';
+    }
+
+    String payText = 'Unpaid';
+    Color payColor = Colors.red;
+    if (paymentStatus == 'paid') {
+      payText = 'Verified & Paid';
+      payColor = Colors.green;
+    } else if (paymentStatus == 'pending_verification') {
+      payText = 'Pending Verification';
+      payColor = Colors.orange;
+    } else if (paymentStatus == 'partial') {
+      payText = 'Partially Paid';
+      payColor = Colors.blue;
+    }
+
     return Column(children: [
       const SizedBox(height: 16),
       // Success banner
       Container(
         padding: const EdgeInsets.all(20),
+        width: double.infinity,
         decoration: BoxDecoration(
-          gradient: const LinearGradient(colors: [Colors.green, Color(0xFF2E7D32)]),
+          gradient: bannerGradient,
           borderRadius: BorderRadius.circular(20),
         ),
-        child: const Column(children: [
-          Icon(Icons.check_circle, color: Colors.white, size: 56),
-          SizedBox(height: 12),
-          Text('Booking Submitted!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22)),
-          SizedBox(height: 6),
-          Text('Your request is pending confirmation from the hotel staff.',
+        child: Column(children: [
+          Icon(statusIcon, color: Colors.white, size: 56),
+          const SizedBox(height: 12),
+          Text(bannerTitle, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22)),
+          const SizedBox(height: 6),
+          Text(bannerSubtitle,
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70, fontSize: 13)),
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
         ]),
       ),
       const SizedBox(height: 20),
@@ -1049,7 +1266,8 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
               const Divider(height: 20),
               _passRow('Total Amount', 'Rs. ${b['total_amount']?.toStringAsFixed(0) ?? '0'}',
                   highlight: true),
-              _passRow('Status', 'Pending Confirmation', color: Colors.orange),
+              _passRow('Booking Status', statusText, color: statusColor),
+              _passRow('Payment Status', payText, color: payColor),
             ]),
           ),
           // Bottom note
@@ -1075,6 +1293,23 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
         ]),
       ),
       const SizedBox(height: 20),
+      // Copy tracking link button
+      OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(double.infinity, 48),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        onPressed: () {
+          final trackingUrl = "${Uri.base.origin}${Uri.base.path}?booking_id=$bookingId&cafe_id=$_cafeId";
+          Clipboard.setData(ClipboardData(text: trackingUrl));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Tracking Link copied! Bookmark it to check status later.')),
+          );
+        },
+        icon: const Icon(Icons.link),
+        label: const Text('Copy Direct Tracking Link'),
+      ),
+      const SizedBox(height: 12),
       // Copy booking ID button
       OutlinedButton.icon(
         style: OutlinedButton.styleFrom(
@@ -1108,6 +1343,8 @@ class _CustomerBookingScreenState extends State<CustomerBookingScreen>
             _emailCtrl.clear();
             _txRefCtrl.clear();
             _notesCtrl.clear();
+            _trackBookingIdCtrl.clear();
+            _trackingTimer?.cancel();
           });
           _loadRooms();
         },
