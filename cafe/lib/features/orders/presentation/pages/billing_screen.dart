@@ -75,7 +75,7 @@ class _BillingScreenState extends State<BillingScreen> {
           .from('orders')
           .select('*, waiter:profiles!waiter_id(full_name), table:tables!table_id(name), room:rooms!room_id(room_number), room_booking:room_bookings!room_booking_id(room_charge)')
           .eq('cafe_id', cafeId)
-          .inFilter('status', ['served', 'ready', 'billed', 'kitchen_sent'])
+          .inFilter('status', ['served', 'ready', 'billed', 'kitchen_sent', 'pending', 'preparing'])
           .order('created_at', ascending: false);
 
       final list = (res as List).map((json) => OrderModel.fromJson(json)).toList();
@@ -84,11 +84,16 @@ class _BillingScreenState extends State<BillingScreen> {
       await cacheBox.put(cacheKey, jsonEncode(res));
 
       // Filter list:
-      // Dine-in must be served, ready, or billed.
+      // Dine-in and Room Service must be active (served, ready, billed, kitchen_sent, pending, preparing).
       // Takeaway can be kitchen_sent or billed.
       final filteredOnline = list.where((order) {
-        if (order.type == 'dine_in') {
-          return order.status == 'served' || order.status == 'ready' || order.status == 'billed';
+        if (order.type == 'dine_in' || order.type == 'room_service') {
+          return order.status == 'served' ||
+              order.status == 'ready' ||
+              order.status == 'billed' ||
+              order.status == 'kitchen_sent' ||
+              order.status == 'pending' ||
+              order.status == 'preparing';
         } else {
           return order.status == 'kitchen_sent' || order.status == 'billed';
         }
@@ -111,8 +116,13 @@ class _BillingScreenState extends State<BillingScreen> {
       }
 
       final filteredCached = cachedOrders.where((order) {
-        if (order.type == 'dine_in') {
-          return order.status == 'served' || order.status == 'ready' || order.status == 'billed';
+        if (order.type == 'dine_in' || order.type == 'room_service') {
+          return order.status == 'served' ||
+              order.status == 'ready' ||
+              order.status == 'billed' ||
+              order.status == 'kitchen_sent' ||
+              order.status == 'pending' ||
+              order.status == 'preparing';
         } else {
           return order.status == 'kitchen_sent' || order.status == 'billed';
         }

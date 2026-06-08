@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:uuid/uuid.dart';
 import '../../../../core/presentation/theme/app_theme.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../auth/presentation/providers/subscription_provider.dart';
@@ -204,6 +205,24 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen>
           .from('rooms')
           .update({'status': 'occupied'}).eq('id', booking['room_id']);
 
+      // Create initial active room service order for the guest
+      final orderId = const Uuid().v4();
+      await _client.from('orders').insert({
+        'id': orderId,
+        'cafe_id': booking['cafe_id'],
+        'room_booking_id': booking['id'],
+        'room_id': booking['room_id'],
+        'type': 'room_service',
+        'status': 'served',
+        'subtotal': 0.0,
+        'discount': 0.0,
+        'tax_amount': 0.0,
+        'service_charge': 0.0,
+        'grand_total': 0.0,
+        'payment_status': 'unpaid',
+        'remaining_due': roomCharge,
+      });
+
       _showSuccess('Guest checked in to Room ${booking['rooms']['room_number']}!');
       _loadBookings();
     } catch (e) {
@@ -273,126 +292,119 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen>
 
   // ── CHECK-OUT ─────────────────────────────────────────────────────────────
   Future<void> _checkOut(Map<String, dynamic> booking) async {
-    // First, fetch all food orders for this booking
-    List<Map<String, dynamic>> foodOrders = [];
-    double foodTotal = 0;
-
+    // 1. Fetch any active (uncompleted, uncancelled) orders for this booking
+    List<Map<String, dynamic>> activeOrders = [];
     try {
-      final ordersData = await _client
+      final activeOrdersData = await _client
           .from('orders')
-          .select('grand_total, status, created_at')
+          .select('id, status')
           .eq('room_booking_id', booking['id'])
-          .neq('status', 'cancelled');
-      foodOrders = List<Map<String, dynamic>>.from(ordersData);
-      foodTotal = foodOrders.fold(
-          0.0, (sum, o) => sum + ((o['grand_total'] as num?)?.toDouble() ?? 0));
+          .neq('status', 'cancelled')
+          .neq('status', 'completed');
+      activeOrders = List<Map<String, dynamic>>.from(activeOrdersData);
+    } catch (e) {
+      debugPrint('Error checking active orders: $e');
+    }
+
+    // If there are active orders, block check-out and show warning dialog
+    if (activeOrders.isNotEmpty) {
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 28),
+              const SizedBox(width: 8),
+              const Text('Cannot Check Out'),
+            ],
+          ),
+          content: const Text(
+            'This guest has an active room bill. Please settle all payments in the Billing & Checkout section first.',
+            style: TextStyle(fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    // 2. Fetch completed orders to retrieve settled totals and payment method
+    List<Map<String, dynamic>> completedOrders = [];
+    try {
+      final completedOrdersData = await _client
+          .from('orders')
+          .select('grand_total, payment_method, subtotal')
+          .eq('room_booking_id', booking['id'])
+          .eq('status', 'completed');
+      completedOrders = List<Map<String, dynamic>>.from(completedOrdersData);
     } catch (_) {}
 
-    final roomCharge = (booking['room_charge'] as num?)?.toDouble() ?? 0;
-    final grandTotal = roomCharge + foodTotal;
-    String selectedPayment = 'cash';
+    final roomCharge = (booking['room_charge'] as num?)?.toDouble() ?? 0.0;
+    final grandTotal = completedOrders.fold(
+        0.0, (sum, o) => sum + ((o['grand_total'] as num?)?.toDouble() ?? 0.0));
+    final foodOrdersTotal = (grandTotal - roomCharge).clamp(0.0, double.infinity);
+    final paymentMethod = completedOrders.isNotEmpty
+        ? (completedOrders.first['payment_method']?.toString() ?? 'cash')
+        : 'cash';
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setDState) => Dialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(8)),
-                      child: const Icon(Icons.logout, color: Colors.red),
-                    ),
-                    const SizedBox(width: 12),
-                    const Text('Check-Out & Bill',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 20)),
-                  ]),
-                  const SizedBox(height: 20),
-                  _infoRow('Guest', booking['guest_name']),
-                  _infoRow('Room',
-                      'Room ${booking['rooms']['room_number']} (${booking['rooms']['type'].toString().toUpperCase()})'),
-                  _infoRow('Check-in', booking['check_in_date']),
-                  _infoRow('Check-out', DateFormat('yyyy-MM-dd').format(DateTime.now())),
-                  const Divider(height: 24),
-                  const Text('BILL SUMMARY',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                          color: Colors.grey,
-                          letterSpacing: 1.2)),
-                  const SizedBox(height: 12),
-                  _billRow('Room Charges', roomCharge),
-                  _billRow('Food & Room Service', foodTotal),
-                  const Divider(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('GRAND TOTAL',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 16)),
-                      Text('Rs. ${grandTotal.toStringAsFixed(0)}',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 20,
-                              color: AppTheme.primaryColor)),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  const Text('Payment Method',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    children: ['cash', 'qr', 'card'].map((method) {
-                      return ChoiceChip(
-                        label: Text(method.toUpperCase()),
-                        selected: selectedPayment == method,
-                        onSelected: (_) =>
-                            setDState(() => selectedPayment = method),
-                        selectedColor: AppTheme.primaryColor,
-                        labelStyle: TextStyle(
-                          color: selectedPayment == method
-                              ? Colors.white
-                              : AppTheme.textPrimary,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red.shade600,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(double.infinity, 48)),
-                    onPressed: () => Navigator.pop(ctx, true),
-                    icon: const Icon(Icons.check),
-                    label: Text(
-                        'Check Out & Collect Rs. ${grandTotal.toStringAsFixed(0)}'),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    style: TextButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 44)),
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: const Text('Cancel'),
-                  ),
-                ],
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
               ),
+              child: const Icon(Icons.logout, color: Colors.red),
             ),
-          ),
+            const SizedBox(width: 12),
+            const Text('Confirm Check-Out'),
+          ],
         ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _infoRow('Guest', booking['guest_name']),
+            _infoRow('Room', 'Room ${booking['rooms']['room_number']} (${booking['rooms']['type'].toString().toUpperCase()})'),
+            _infoRow('Check-in', booking['check_in_date']),
+            _infoRow('Check-out', DateFormat('yyyy-MM-dd').format(DateTime.now())),
+            const Divider(height: 24),
+            _infoRow('Room Charges', 'Rs. ${roomCharge.toStringAsFixed(0)}'),
+            _infoRow('Food & Service', 'Rs. ${foodOrdersTotal.toStringAsFixed(0)}'),
+            _infoRow('Grand Total', 'Rs. ${grandTotal.toStringAsFixed(0)} (Paid via Billing)'),
+            _infoRow('Payment Method', paymentMethod.toUpperCase()),
+            const SizedBox(height: 16),
+            const Text(
+              'Confirm check-out? This will free the room and mark it as dirty for cleaning.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade600,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('✓ Check Out'),
+          ),
+        ],
       ),
     );
 
@@ -403,9 +415,9 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen>
       await _client.from('room_bookings').update({
         'status': 'checked_out',
         'actual_checkout_at': now,
-        'food_orders_total': foodTotal,
+        'food_orders_total': foodOrdersTotal,
         'grand_total': grandTotal,
-        'payment_method': selectedPayment,
+        'payment_method': paymentMethod,
         'payment_status': 'paid',
       }).eq('id', booking['id']);
 
@@ -413,8 +425,7 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen>
           .from('rooms')
           .update({'status': 'dirty'}).eq('id', booking['room_id']);
 
-      _showSuccess(
-          'Guest checked out! Total collected: Rs. ${grandTotal.toStringAsFixed(0)}');
+      _showSuccess('Guest checked out successfully!');
       _loadBookings();
     } catch (e) {
       _showError('Check-out failed: $e');

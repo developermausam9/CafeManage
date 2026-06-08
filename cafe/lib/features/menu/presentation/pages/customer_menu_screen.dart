@@ -256,6 +256,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
           'service_charge': newSvc,
           'grand_total': newGrandTotal,
           'remaining_due': newGrandTotal,
+          'status': 'kitchen_sent',
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         }).eq('id', targetOrderId);
       } else {
@@ -372,7 +373,7 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
     if (_cafeId == null || _roomId == null) return;
     if (!silent) setState(() => _loadingBill = true);
     try {
-      dynamic query = _client.from('orders').select('grand_total, status').neq('status', 'cancelled');
+      dynamic query = _client.from('orders').select('subtotal, tax_amount, service_charge, status').neq('status', 'cancelled');
       if (_bookingId != null && _bookingId!.isNotEmpty) {
         query = query.eq('room_booking_id', _bookingId!);
       } else {
@@ -380,7 +381,12 @@ class _CustomerMenuScreenState extends State<CustomerMenuScreen>
       }
       final orders = await query;
       final total = (orders as List).fold<double>(
-          0, (s, o) => s + ((o['grand_total'] as num?)?.toDouble() ?? 0));
+          0,
+          (s, o) =>
+              s +
+              ((o['subtotal'] as num?)?.toDouble() ?? 0.0) +
+              ((o['tax_amount'] as num?)?.toDouble() ?? 0.0) +
+              ((o['service_charge'] as num?)?.toDouble() ?? 0.0));
       setState(() => _foodTotal = total);
     } catch (_) {} finally {
       if (!silent) setState(() => _loadingBill = false);
